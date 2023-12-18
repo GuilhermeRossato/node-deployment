@@ -1,0 +1,14 @@
+{
+  "name": "node-deployment",
+  "version": "0.1.0",
+  "description": "Node script to interactively setup and configure projects with automatic deployment",
+  "main": "node-deployment.js",
+  "scripts": {
+    "start": "node node-deployment.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {},
+  "dependencies": {}
+}
