@@ -1040,97 +1040,99 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
       } else {
         c.log(`              Versions: No pipelines have been scheduled yet`);
       }
-      c.log('');
-      c.log(' Options:');
+      console.log('');
+      console.log(' Options:');
     } catch (err) {
-      c.log('');
-      c.log('Failed while retrieving project state:');
-      c.log(err.stack);
-      c.log('');
-      c.log(`Node Deployment Configuration Menu for: ${projectPath}`);
+      console.log('');
+      console.log('Failed while retrieving project state:');
+      console.log(err.stack);
+      console.log('');
+      console.log(`Node Deployment Configuration Menu for: ${projectPath}`);
     }
-    c.log('');
-    c.log(' [0] Exit program');
+    console.log('');
+    console.log(' [0] Exit program');
     if (state.versionList && state.versionList.length) {
       const last = state.versionList[state.versionList.length - 1];
       if (last.isCurrentInstance && state.instanceRunning) {
-        c.log(` [1] View current instance version "${last.id}" (currently executing at pid ${state.instancePid})`)
+        console.log(` [1] View current instance version "${last.id}" (currently executing at pid ${state.instancePid})`)
       } else if (last.startedAt || last.createdAt) {
         const diff = getFormattedHourDifference(new Date(), last.startedAt || last.createdAt);
-        c.log(` [1] View latest created pipeline "${last.id}" (pipeline ${last.startedAt ? 'started' : 'created'} ${diff} hours ago)`);
+        console.log(` [1] View latest created pipeline "${last.id}" (pipeline ${last.startedAt ? 'started' : 'created'} ${diff} hours ago)`);
       } else {
-        c.log(` [1] View latest created pipeline "${last.id}"`);
+        console.log(` [1] View latest created pipeline "${last.id}"`);
       }
     } else {
-      c.log(' [/] There are no pipelines (no app versions have been pushed)');
+      console.log(' [/] There are no pipelines (no app versions have been pushed)');
     }
-    c.log(` [2] View deployment logs (${state.deploymentLogFileSize ? (state.deploymentLogFileSize / 1024).toFixed(1) + 'KB' : 'not found'})`);
-    c.log('');
+    console.log(` [2] View deployment logs (${state.deploymentLogFileSize ? (state.deploymentLogFileSize / 1024).toFixed(1) + 'KB' : 'not found'})`);
+    console.log('');
 
     process.stdout.write('\n > Enter an option: ');
     const selection = await waitForUserInput();
     process.stdout.write('\n');
     if (selection === '0') {
-      c.log('Goodbye');
+      console.log('Goodbye');
       process.exit(0);
-    } else if (selection === '1' && state.versionList && state.versionList.length) {
-      const last = state.versionList[state.versionList.length - 1];
-      c.log(`The last pipeline created is "${last.id}"`);
-      if (last.isCurrentInstance) {
-        if (state.instanceRunning) {
-          c.log(`It is currently running at pid ${state.instancePid} as the current app instance`);
-        } else if (state.instancePid) {
-          c.log(`It is the app instance but it has exited`);
-        } else {
-          c.log(`It is the app instance but it has not started`);
-        }
-      }
-      if (last.createdAt) {
-        const diff = getFormattedHourDifference(new Date(), last.createdAt);
-        c.log(`It was created at ${last.createdAt.toISOString()} (${diff} hours ago)`);
-      }
-      if (last.startedAt) {
-        const diff = getFormattedHourDifference(new Date(), last.startedAt);
-        c.log(`It was started at ${last.startedAt.toISOString()} (${diff} hours ago)`);
-      }
-      c.log('');
-      continue;
-    } else if (selection === '2') {
-      c.log(`Deployment logs path: ${state.deploymentLogFilePath}`);
-      c.log(`Deployment logs size: ${state.deploymentLogFileSize ? `${(state.deploymentLogFileSize / 1024).toFixed(1)} KB` : '(no file)'}`);
-      const targetLogFile = state.deploymentLogFilePath;
-      const stat = await asyncTryCatchNull(fs.promises.stat(targetLogFile));
-      if (stat === null) {
-        c.log('The file does not exist and therefore cannot be read.');
-        continue;
-      }
-      process.stdout.write(`\nLast 100 lines of "${targetLogFile}"\n\n`);
-      await new Promise(resolve => setTimeout(resolve, 200));
-      process.stdout.write('\n');
-      await new Promise(resolve => setTimeout(resolve, 200));
-      process.stdout.write('\n');
-      await new Promise(async (resolve) => {
-        try {
-          const child = cp.spawn('tail', ['-n', '100', targetLogFile], {
-            cwd: path.dirname(targetLogFile),
-            stdio: ['ignore', 'inherit', 'inherit']
-          });
-          child.on('error', (err) => {
-            c.log(`Could not execute the "tail" command: ${err.message}`);
-            resolve();
-          });
-          child.on('exit', () => resolve());
-        } catch (err) {
-          c.log(`Failed while starting "tail" command: ${err.message}`);
-          resolve();
-        }
-      });
-      process.stdout.write('\n');
-      await new Promise(resolve => setTimeout(resolve, 500));
-      process.stdout.write(`\nLog finished\n\n`);
-      continue;
     } else {
-      c.log('Option not recognized as valid input');
+      if (selection === '1' && state.versionList && state.versionList.length) {
+        const last = state.versionList[state.versionList.length - 1];
+        console.log(`The last pipeline created is "${last.id}"`);
+        if (last.isCurrentInstance) {
+          if (state.instanceRunning) {
+            console.log(`It is currently running at pid ${state.instancePid} as the current app instance`);
+          } else if (state.instancePid) {
+            console.log(`It is the app instance but it has exited`);
+          } else {
+            console.log(`It is the app instance but it has not started`);
+          }
+        }
+        if (last.createdAt) {
+          const diff = getFormattedHourDifference(new Date(), last.createdAt);
+          console.log(`It was created at ${last.createdAt.toISOString()} (${diff} hours ago)`);
+        }
+        if (last.startedAt) {
+          const diff = getFormattedHourDifference(new Date(), last.startedAt);
+          console.log(`It was started at ${last.startedAt.toISOString()} (${diff} hours ago)`);
+        }
+        console.log('');
+      } else {
+        if (selection === '2') {
+          console.log(`Deployment logs path: ${state.deploymentLogFilePath}`);
+          console.log(`Deployment logs size: ${state.deploymentLogFileSize ? `${(state.deploymentLogFileSize / 1024).toFixed(1)} KB` : '(no file)'}`);
+          const targetLogFile = state.deploymentLogFilePath;
+          const stat = await asyncTryCatchNull(fs.promises.stat(targetLogFile));
+          if (stat === null) {
+            console.log('The file does not exist and therefore cannot be read.');
+            continue;
+          }
+          process.stdout.write(`\nLast 100 lines of "${targetLogFile}"\n\n`);
+          await new Promise(resolve => setTimeout(resolve, 200));
+          process.stdout.write('\n');
+          await new Promise(resolve => setTimeout(resolve, 200));
+          process.stdout.write('\n');
+          await new Promise(async (resolve) => {
+            try {
+              const child = cp.spawn('tail', ['-n', '100', targetLogFile], {
+                cwd: path.dirname(targetLogFile),
+                stdio: ['ignore', 'inherit', 'inherit']
+              });
+              child.on('error', (err) => {
+                c.log(`Could not execute the "tail" command: ${err.message}`);
+                resolve();
+              });
+              child.on('exit', () => resolve());
+            } catch (err) {
+              c.log(`Failed while starting "tail" command: ${err.message}`);
+              resolve();
+            }
+          });
+          process.stdout.write('\n');
+          await new Promise(resolve => setTimeout(resolve, 500));
+          process.stdout.write(`\nLog finished\n\n`);
+        } else {
+          console.log('Option not recognized as valid input');
+        }
+      }
       continue;
     }
   }
