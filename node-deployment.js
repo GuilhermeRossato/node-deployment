@@ -272,7 +272,7 @@ async function nodeDeploymentProcessor() {
   let replacingPipelineId;
 
   async function executeDeployPipeline(id, repositoryPath) {
-    c.log(`Deployment processing for pipeline "${id}" started`);
+    c.log(`Processing for "${id}" started`);
     const config = await getProjectConfig(projectPath);
     if (!config || !config.steps || !config.steps.length) {
       throw new Error('Missing config or pipeline steps');
@@ -289,7 +289,7 @@ async function nodeDeploymentProcessor() {
       if (step.id === 'purge') {
         const instanceParentDir = path.dirname(repositoryPath);
         const pipelineList = await fs.promises.readdir(instanceParentDir);
-        c.log(`There are currently ${version.length} pipeline folders at "${instanceParentDir}"`);
+        c.log(`Purge step found ${version.length} pipeline folders at "${instanceParentDir}"`);
         const exceedList = pipelineList.length <= 15 ? [] : pipelineList.length <= 16 ? [pipelineList[0]] : [pipelineList[0], pipelineList[1]];
         if (exceedList.length === 0) {
           c.log(`Pipeline ${id} - Skipping step ${i + 1} because there aren\'t enough pipeline folders to trigger deletion`);
@@ -311,7 +311,7 @@ async function nodeDeploymentProcessor() {
           c.log(`Pipeline ${id} - Finished step ${i + 1} ${hadError ? 'with errors' : 'without errors'}`);
         }
       } else if (step.id === 'restart') {
-        const response = await fetch(`http://localhost:${config.instanceManagerPort}/`, {
+        const response = await fetch(`http://localhost:${config.managerPort}/`, {
           method: 'POST',
           body: JSON.stringify({ repositoryPath })
         });
@@ -371,10 +371,40 @@ async function nodeDeploymentProcessor() {
           });
         });
         c.log(`Pipeline ${id} - Finished step ${i + 1} without errors`);
+        runningPipelineId = null;
       } else {
         throw new Error(`Unknown pipeline step id "${step.id}" at index ${i} of "${projectPath}"`);
       }
     }
+  }
+  async function waitThenProcessPipelineRequest(id, repositoryPath) {
+    if (runningPipelineId) {
+      c.log(`"${id}" will wait for "${runningPipelineId}" to be stopped`);
+      replacingPipelineId = id;
+      for (let i = 0; i < 600; i++) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (replacingPipelineId !== id) {
+          c.log(`Pipeline "${id}" was cancelled by the start of "${replacingPipelineId}"`);
+          return;
+        }
+        if (runningPipelineId === null) {
+          c.log(`The previous pipeline was cancelled and "${id}" will start`);
+          return;
+        }
+      }
+    }
+    if (runningPipelineId !== null) {
+      c.log(`The pipeline "${id}" could not be executed because "${runningPipelineId}" was executing.`);
+      return;
+    }
+    
+    
+    replacingPipelineId = null;
+    runningPipelineId = id;
+    executeDeployPipeline(id, repositoryPath).catch((err) => {
+      c.log(`Deployment processing for "${id}" failed: ${err.stack}`);
+      runningPipelineId = null;
+    });
   }
 
   async function processPipelineRequest(data) {
@@ -383,29 +413,10 @@ async function nodeDeploymentProcessor() {
     }
     const targetInstancePath = data.repositoryPath;
     const id = path.basename(targetInstancePath);
-    if (runningPipelineId) {
-      c.log(`Deployment pipeline for "${id}" will start after ${runningPipelineId} is cancelled or finishes`);
-      replacingPipelineId = id;
-      for (let i = 0; i < 600; i++) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        if (replacingPipelineId !== id) {
-          c.log(`Deployment pipeline for "${id}" was cancelled by the start of "${replacingPipelineId}"`);
-          return;
-        }
-        if (runningPipelineId === null) {
-          break;
-        }
-      }
-    }
-    if (runningPipelineId === null) {
-      replacingPipelineId = null;
-      runningPipelineId = id;
-    } else {
-      c.log(`Deployment pipeline for "${id}" was cancelled by the start of another pipeline`);
-      return;
-    }
-    executeDeployPipeline(id, targetInstancePath).catch((err) => {
-      c.log(`Deployment processing for "${id}" failed: ${err.stack}`);
+    c.log(`Received pipeline request "${id}" (${runningPipelineId ? `while "${runningPipelineId}" is executing` : 'while idle'})`);
+    
+    waitThenProcessPipelineRequest(id, targetInstancePath).catch((err) => {
+      c.log(`The processing start for "${id}" failed: ${err.stack}`);
     });
   }
 
@@ -505,8 +516,8 @@ async function nodeDeploymentPostUpdate() {
     process.exit(1);
   }
   try {
-    c.log(`Sending new pipeline request "${id}" to deployment processor`);
-    const response = await fetch(`http://localhost:${config.deploymentProcessorPort}/`, {
+    c.log(`Sending pipeline "${id}" to processor`);
+    const response = await fetch(`http://localhost:${config.processorPort}/`, {
       method: 'POST',
       body: JSON.stringify({ id, repositoryPath })
     });
@@ -517,6 +528,7 @@ async function nodeDeploymentPostUpdate() {
     if (!response.ok) {
       throw new Error('Deployment processor responded with error');
     }
+    c.log(`Pipeline ${id} scheduled sucessfully`);
   } catch (err) {
     c.log(`Post update failed while sending new pipeline request to deployment processor.`);
     c.log(err.stack);
@@ -744,7 +756,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
   // Step 6
   const postUpdateHookPath = path.resolve(ev.path.hooks, 'post-update');
   {
-    const postUpdateSource = `#!/bin/bash\n/bin/node ./deployment/post-update.js --post-update "${ev.path.repository}" \$*\n`;
+    const postUpdateSource = `#!/bin/bash\n/bin/node ./deployment/node-deployment.js --scheduler "${ev.path.repository}" \$*\n`;
     const postUpdateContent = await asyncTryCatchNull(fs.promises.readFile(postUpdateHookPath, 'utf-8'));
     if (postUpdateContent === null) {
       c.log('Step 6. Adding the post-update hook to the repository');
