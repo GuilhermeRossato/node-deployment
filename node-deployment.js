@@ -268,8 +268,8 @@ async function nodeDeploymentProcessor() {
   }
   c.log(`Node deployment processor started for "${projectPath}"`);
 
-  let runningPipelineId;
-  let replacingPipelineId;
+  let runningPipelineId = null;
+  let replacingPipelineId = null;
 
   async function executeDeployPipeline(id, repositoryPath) {
     c.log(`Processing for "${id}" started`);
@@ -281,7 +281,7 @@ async function nodeDeploymentProcessor() {
     const steps = isFirstReuse ? config.steps.slice(1) : config.steps;
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
-      if (runningPipelineId !== id || replacingPipelineId !== null) {
+      if (runningPipelineId !== id || (replacingPipelineId !== null && replacingPipelineId !== undefined)) {
         c.log(`Pipeline ${id} - Cancelled at step ${i + 1}`);
         break;
       }
@@ -393,7 +393,7 @@ async function nodeDeploymentProcessor() {
         }
       }
     }
-    if (runningPipelineId !== null) {
+    if (runningPipelineId !== null && runningPipelineId !== undefined) {
       c.log(`The pipeline "${id}" could not be executed because "${runningPipelineId}" was executing.`);
       return;
     }
@@ -762,7 +762,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
       c.log('Step 6. Adding the post-update hook to the repository');
       await fs.promises.writeFile(
         postUpdateHookPath,
-        `${postUpdateContent}# do not edit above this command because node-deployment uses it\n`,
+        `${postUpdateSource}# do not edit above this command because node-deployment uses it\n`,
         'utf-8'
       );
     } else if (!postUpdateContent.startsWith(postUpdateSource)) {
