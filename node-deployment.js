@@ -253,6 +253,7 @@ async function nodeDeploymentProcessor() {
   const projectPath = path.resolve(args[1]);
   const deploymentStat = await asyncTryCatchNull(fs.promises.stat(path.resolve(projectPath, 'deployment')));
   if (deploymentStat === null) {
+    c.log(`Could not find project deployment folder`);
     throw new Error(`Could not find project deployment folder for "${projectPath}"`);
   }
   c.logFilePath = path.resolve(projectPath, 'deployment', 'deployment.log');
@@ -281,18 +282,22 @@ async function nodeDeploymentProcessor() {
     const steps = isFirstReuse ? config.steps.slice(1) : config.steps;
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
-      if (runningPipelineId !== id || (replacingPipelineId !== null && replacingPipelineId !== undefined)) {
-        c.log(`Pipeline ${id} - Cancelled at step ${i + 1}`);
+      if (runningPipelineId !== id) {
+        c.log(`Pipeline "${id}" - Cancelled at step ${i + 1} because running pipeline id changed to "${runningPipelineId}"`);
         break;
       }
-      c.log(`Pipeline ${id} - Starting step ${i + 1}: ${step.name}`);
+      if (replacingPipelineId !== null && replacingPipelineId !== undefined) {
+        c.log(`Pipeline "${id}" - Cancelled at step ${i + 1} because replacing pipeline id was set to "${replacingPipelineId}"`);
+        break;
+      }
+      c.log(`Pipeline "${id}" - Starting step ${i + 1}: ${step.name}`);
       if (step.id === 'purge') {
         const instanceParentDir = path.dirname(repositoryPath);
         const pipelineList = await fs.promises.readdir(instanceParentDir);
-        c.log(`Purge step found ${version.length} pipeline folders at "${instanceParentDir}"`);
+        c.log(`Purge step found ${pipelineList.length} pipeline folders at "${instanceParentDir}"`);
         const exceedList = pipelineList.length <= 15 ? [] : pipelineList.length <= 16 ? [pipelineList[0]] : [pipelineList[0], pipelineList[1]];
         if (exceedList.length === 0) {
-          c.log(`Pipeline ${id} - Skipping step ${i + 1} because there aren\'t enough pipeline folders to trigger deletion`);
+          c.log(`Pipeline "${id}" - Skipping step ${i + 1} because there aren\'t enough pipeline folders to trigger deletion`);
         } else {
           let hadError = false;
           for (let j = 0; j < exceedList.length; j++) {
@@ -308,7 +313,7 @@ async function nodeDeploymentProcessor() {
               c.log(`Failed at removing old pipeline folder of "${exceedList[i]}": ${err.message}`);
             }
           }
-          c.log(`Pipeline ${id} - Finished step ${i + 1} ${hadError ? 'with errors' : 'without errors'}`);
+          c.log(`Pipeline "${id}" - Finished step ${i + 1} ${hadError ? 'with errors' : ''}`);
         }
       } else if (step.id === 'restart') {
         const response = await fetch(`http://localhost:${config.managerPort}/`, {
@@ -322,11 +327,11 @@ async function nodeDeploymentProcessor() {
         if (!response.ok) {
           throw new Error('Instance manager responded with error');
         }
-        c.log(`Pipeline ${id} - Finished step ${i + 1} without errors`);
+        c.log(`Pipeline "${id}" - Finished step ${i + 1}`);
       } else if (step.id === 'install') {
         await new Promise((resolve, reject) => {
-          const command = step.command.split('"');
-          c.log(`Pipeline ${id} - Step ${i + 1} - $ ${command.join(' ')}`);
+          const command = step.command.split(' ');
+          c.log(`Pipeline "${id}" - Step ${i + 1} - $ ${command.join(' ')}`);
           const child = cp.spawn(command[0], command.slice(1), {
             cwd: repositoryPath,
             stdio: ['inherit', 'pipe', 'pipe']
@@ -349,8 +354,8 @@ async function nodeDeploymentProcessor() {
         c.log(`Pipeline ${id} - Finished step ${i + 1} without errors`);
       } else if (step.id === 'script') {
         await new Promise((resolve, reject) => {
-          const command = step.command.split('"');
-          c.log(`Pipeline ${id} - Step ${i + 1} - $ ${command.join(' ')}`);
+          const command = step.command.split(' ');
+          c.log(`Pipeline "${id}" - Step ${i + 1} - $ ${command.join(' ')}`);
           const child = cp.spawn(command[0], command.slice(1), {
             cwd: repositoryPath,
             stdio: ['inherit', 'pipe', 'pipe']
@@ -370,11 +375,13 @@ async function nodeDeploymentProcessor() {
             }
           });
         });
-        c.log(`Pipeline ${id} - Finished step ${i + 1} without errors`);
-        runningPipelineId = null;
+        c.log(`Pipeline "${id}" - Finished step ${i + 1}`);
       } else {
         throw new Error(`Unknown pipeline step id "${step.id}" at index ${i} of "${projectPath}"`);
       }
+    }
+    if (runningPipelineId === id) {
+      runningPipelineId = null;
     }
   }
   async function waitThenProcessPipelineRequest(id, repositoryPath) {
@@ -440,12 +447,12 @@ async function nodeDeploymentProcessor() {
       });
     });
   } catch (err) {
-    c.log(`Could not start deployment server at tcp port ${config.processorPort}: ${err.message}`);
+    c.log(`Could not start processor server at tcp port ${config.processorPort}: ${err.message}`);
     process.exit(1);
   }
 
   if (!server) {
-    c.log('Missing server object');
+    c.log('Missing server object on processor');
     process.exit(1);
   }
 
