@@ -64,7 +64,11 @@ if (isSetup) {
 } else if (isScheduler) {
   executeProgramAs(nodeDeploymentPostUpdate, 'Post Update');
 } else {
-  c.log(`Fatal error: Unhandled arguments supplied to node deployment script: ${args.length}`);
+  if (args.length === 2) {
+    c.log(`Fatal error: Unhandled arguments supplied to node deployment script: ${args.length}`);
+  } else {
+    c.log(`Fatal error: Unhandled arguments supplied to node deployment script: unknown script type at first argument`);
+  }
   process.exit(1);
 }
 
@@ -138,7 +142,7 @@ async function nodeDeploymentManager() {
     const instanceBeingReplaced = instancePath;
     if (instance) {
       instance.kill();
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 30; i++) {
         if (!instance) {
           break;
         }
@@ -151,10 +155,9 @@ async function nodeDeploymentManager() {
     }
     await new Promise(resolve => setTimeout(resolve, 100));
     if (instanceBeingReplaced !== instancePath) {
-      c.log(`Aborting restart request for "${id}" because of a newer request: "${process.basename(instancePath)}"`);
+      c.log(`Aborting restart request for "${id}" because a newer pipeline started ("${process.basename(instancePath)}")`);
       return;
     }
-    instanceBeingReplaced = null;
     instancePath = targetInstancePath;
 
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -162,8 +165,12 @@ async function nodeDeploymentManager() {
     const instanceLogPath = path.resolve(targetInstancePath, 'instance.log');
     await fs.promises.writeFile(instanceLogPath, `Started at ${new Date().toISOString()}\n`, 'utf-8');
 
-    if (instanceBeingReplaced !== null || instancePath !== targetInstancePath || instance !== null) {
-      c.log(`Aborting restart request for "${id}" because of a change in state during start`);
+    if (instance !== null) {
+      c.log(`Aborting restart request for "${id}" because an instance started after the previous was stopped`);
+      return;
+    }
+    if (instancePath !== targetInstancePath) {
+      c.log(`Aborting restart request for "${id}" because the instance path changed while starting at "${instanceBeingReplaced}"`);
       return;
     }
     await fs.promises.writeFile(instanceFilePath, targetInstancePath, 'utf-8');
@@ -192,8 +199,11 @@ async function nodeDeploymentManager() {
       throw new Error('Invalid input');
     }
 
+    const id = path.basename(data.repositoryPath);
+
+    c.log(`Restart request was received for "${id}"`)
+
     executeInstanceRestart(data.repositoryPath).catch((err) => {
-      const id = path.basename(data.repositoryPath);
       c.log(`Instance restart for "${id}" failed: ${err.stack}`);
     });
   }
@@ -423,7 +433,7 @@ async function nodeDeploymentProcessor() {
     c.log(`Received pipeline request "${id}" (${runningPipelineId ? `while "${runningPipelineId}" is executing` : 'while idle'})`);
     
     waitThenProcessPipelineRequest(id, targetInstancePath).catch((err) => {
-      c.log(`The processing start for "${id}" failed: ${err.stack}`);
+      c.log(`The pipeline initialization for "${id}" failed: ${err.stack}`);
     });
   }
 
