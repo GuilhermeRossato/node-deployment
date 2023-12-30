@@ -31,3 +31,20 @@ When a pipeline finishes executing successfully the instance management will res
 This program runs with [node](https://nodejs.org/en), it does not depend on any npm package so running `npm install` is not necessary after cloning it.
 
 This script requires [git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) for the creation and handling of the project repository.
+
+## Development notes
+
+If you have `curl` or `wget` you can download and execute the script with:
+
+```bash
+curl -o node-deployment.js https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deployment.js && node node-deployment.js
+
+wget https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deployment.js -O node-deployment.js && node node-deployment.js
+```
+
+You can upload the `node-deployment` file to a remote server and execute it with these commands:
+
+```bash
+scp -P 22 ./node-deployment.js [username]@[hostname]:~/Downloads/node-deployment.js
+ssh -p 22 [username]@[hostname] "node ~/Downloads/node-deployment.js"
+```

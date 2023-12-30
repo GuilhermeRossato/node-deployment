@@ -1,11 +1,14 @@
-// Node Deployment Script
+// Node Deployment Script v1.0.0
 
-// - Handles the CI/CD process for self-hosted node projects.
+// https://github.com/GuilhermeRossato/node-deployment
 
-// This is an interactive script that setups a git repository on a server with automatic deployment.
+// This script handles the CI/CD process for self-hosted node projects.
+// It contains an interactive setup to initialize the project
 
-// When changes are submited to the repository a git hook schedules the asyncronous deployment.
-// The deployment is processed in steps that can be configured depending on the project.
+// It works by using the 'post-update' git hook to trigger deployment
+// It also maintains the app process, restarting it when needed
+// The default deployment steps are `npm ci`, `npm run build`
+// When successfull the app is started with `npm run start`.
 
 const process = require('process');
 const cp = require('child_process');
