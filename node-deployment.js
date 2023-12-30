@@ -130,7 +130,7 @@ async function nodeDeploymentManager() {
   const instanceFilePath = path.resolve(projectPath, 'deployment', 'instance-path.txt');
   let instancePath = await asyncTryCatchNull(fs.promises.readFile(instanceFilePath, 'utf-8'));
   let instance;
-
+  let expectInstanceClose = false;
   async function executeInstanceRestart(targetInstancePath) {
     const id = path.basename(targetInstancePath);
     const stat = await asyncTryCatchNull(fs.promises.stat(targetInstancePath));
@@ -141,6 +141,7 @@ async function nodeDeploymentManager() {
     c.log(`Processing ${instance ? 'restart' : 'start'} of instance for "${id}"`);
     const instanceBeingReplaced = instancePath;
     if (instance) {
+      expectInstanceClose = true;
       instance.kill();
       for (let i = 0; i < 30; i++) {
         if (!instance) {
@@ -165,8 +166,24 @@ async function nodeDeploymentManager() {
     const instanceLogPath = path.resolve(targetInstancePath, 'instance.log');
     await fs.promises.writeFile(instanceLogPath, `Started at ${new Date().toISOString()}\n`, 'utf-8');
 
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     if (instance !== null) {
-      c.log(`Aborting restart request for "${id}" because an instance started after the previous was stopped`);
+      c.log(`Previous instance is still running, attempting to stop it`);
+      expectInstanceClose = true;
+      instance.kill();
+      for (let i = 0; i < 20; i++) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (instance === null) {
+          break;
+        }
+      }
+    }
+    if (instance !== null) {
+      c.log(`Restart request for "${id}" failed because another instance is executing`);
+      if (instance && instance.pid) {
+        c.log(`The instance that caused this has process id ${instance.pid}`);
+      }
       return;
     }
     if (instancePath !== targetInstancePath) {
@@ -174,6 +191,8 @@ async function nodeDeploymentManager() {
       return;
     }
     await fs.promises.writeFile(instanceFilePath, targetInstancePath, 'utf-8');
+    const startTime = new Date();
+    expectInstanceClose = false;
     instance = cp.spawn('npm', ['run', 'start'], {
       cwd: targetInstancePath,
       stdio: ['ignore', 'pipe', 'pipe']
@@ -183,7 +202,16 @@ async function nodeDeploymentManager() {
       instance = null;
     });
     instance.on('exit', (code) => {
-      c.log(`Instance from "${id}" exited with code ${JSON.stringify(code)}`);
+      const period = (new Date().getTime() - startTime.getTime()) / 1000;
+      const timeString = period < 60 ? `${period.toFixed(1)} seconds` : period / 60 < 60 ? `${(period / 60).toFixed(1)} minutes` : `${(period / 60).toFixed(1)} hours`;
+      c.log(`Instance from "${id}" exited ${expectInstanceClose ? 'expectedly' : 'unexpectedly'} with code ${JSON.stringify(code)} after running for ${timeString}`);
+      if (!expectInstanceClose && period > 30) {
+        c.log(`Restarting "${id}" because the process ran for more than 30 seconds`);
+        executeInstanceRestart(targetInstancePath);
+      }
+      if (expectInstanceClose) {
+        expectInstanceClose = false;
+      }
       instance = null;
     });
     instance.on('spawn', () => {
@@ -414,8 +442,8 @@ async function nodeDeploymentProcessor() {
       c.log(`The pipeline "${id}" could not be executed because "${runningPipelineId}" was executing.`);
       return;
     }
-    
-    
+
+
     replacingPipelineId = null;
     runningPipelineId = id;
     executeDeployPipeline(id, repositoryPath).catch((err) => {
@@ -431,7 +459,7 @@ async function nodeDeploymentProcessor() {
     const targetInstancePath = data.repositoryPath;
     const id = path.basename(targetInstancePath);
     c.log(`Received pipeline request "${id}" (${runningPipelineId ? `while "${runningPipelineId}" is executing` : 'while idle'})`);
-    
+
     waitThenProcessPipelineRequest(id, targetInstancePath).catch((err) => {
       c.log(`The pipeline initialization for "${id}" failed: ${err.stack}`);
     });
@@ -457,7 +485,7 @@ async function nodeDeploymentProcessor() {
       });
     });
   } catch (err) {
-    c.log(`Could not start processor server at tcp port ${config.processorPort}: ${err.message}`);
+    c.log(`Failed to start server at tcp port ${config.processorPort}: ${err.message}`);
     process.exit(1);
   }
 
