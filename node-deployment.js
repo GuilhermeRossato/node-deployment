@@ -610,7 +610,7 @@ async function waitForUserConfirmation(question) {
     if (y.toLowerCase()[0] === 'n') {
       return false;
     }
-    process.stdout.write('Unknown response. Try again.\n');
+    process.stdout.write('Unrecognized response.\n');
     process.stdout.write(question ? question : 'Do you confirm?');
     process.stdout.write(' (y/n) ');
   }
@@ -679,7 +679,8 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
   const ev = await evaluateProjectPath(projectPath);
   // Step 1
   if (!ev.exists.repository) {
-    c.log(`Step 1. Creating directory for project`);
+    c.log(`Step 1. Creating the project directory`);
+    await new Promise(resolve => setTimeout(resolve, 500));
     c.log('');
     try {
       await fs.promises.mkdir(ev.path.repository, { recursive: true });
@@ -696,6 +697,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
   // Step 2
   if (!ev.exists.hooks) {
     c.log(`Step 2. Creating git bare repository`);
+    await new Promise(resolve => setTimeout(resolve, 500));
     c.log('');
     cp.execSync('git init --bare', {
       cwd: ev.path.repository,
@@ -707,6 +709,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
   // Step 3
   if (!ev.exists.deployment) {
     c.log(`Step 3. Creating the deployment folder`);
+    await new Promise(resolve => setTimeout(resolve, 500));
     c.log('');
     await fs.promises.mkdir(ev.path.deployment, { recursive: true });
     ev.exists.deployment = true;
@@ -730,6 +733,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
     const targetScriptSource = await asyncTryCatchNull(fs.promises.readFile(targetScriptPath, 'utf-8'));
     if (targetScriptSource === null) {
       c.log(`Step 4. Adding the node deployment script to the deployment folder`);
+      await new Promise(resolve => setTimeout(resolve, 500));
       c.log('');
     }
     const originScriptPath = path.resolve(process.cwd(), process.argv[1]);
@@ -771,6 +775,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
   const saveConfig = () => fs.promises.writeFile(ev.path.config, JSON.stringify(ev.config, null, '  '), 'utf-8');
   if (!ev.exists.config) {
     c.log(`Step 5. Adding the configuration file to the deployment folder`);
+    await new Promise(resolve => setTimeout(resolve, 500));
     c.log('');
     const [instanceManagerPort, deploymentProcessorPort] = await Promise.all(
       [0, 200].map((delay) => new Promise((resolve, reject) => {
@@ -808,6 +813,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
     const postUpdateContent = await asyncTryCatchNull(fs.promises.readFile(postUpdateHookPath, 'utf-8'));
     if (postUpdateContent === null) {
       c.log('Step 6. Adding the post-update hook to the repository');
+      await new Promise(resolve => setTimeout(resolve, 500));
       await fs.promises.writeFile(
         postUpdateHookPath,
         `${postUpdateSource}# do not edit above this command because node-deployment uses it\n`,
@@ -828,6 +834,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
   // Step 7
   if (!ev.config.madePostUpdateExecutable) {
     c.log('Step 7. Making the post-update script executable by git');
+    await new Promise(resolve => setTimeout(resolve, 500));
     cp.execSync(`chmod +x "${postUpdateHookPath}"`, {
       cwd: ev.path.hooks,
       stdio: 'inherit'
@@ -837,7 +844,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
   }
   // Step 8
   {
-    // Verify if instance manager is running
+    // Verify if the instance manager is running
     let instanceManagerPidText = await asyncTryCatchNull(
       fs.promises.readFile(
         path.resolve(ev.path.deployment, 'manager.pid'),
@@ -847,6 +854,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
     let willStartManager = false;
     if (!willStartManager && instanceManagerPidText === null) {
       c.log('Step 8. Starting Instance Manager');
+      await new Promise(resolve => setTimeout(resolve, 500));
       c.log('');
       willStartManager = true;
     }
@@ -854,15 +862,15 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
       const running = await isProcessRunningByPid(parseInt(instanceManagerPidText, 10));
       if (!running) {
         willStartManager = true;
-        c.log('Detected instance manager not executing');
-        c.log('This script will attempt to start it manually');
+        c.log('Notice: The instance manager process (manages app instances) is not executing');
+        c.log('It will be started so that the app instance can be executed');
         c.log('');
       }
     }
     if (willStartManager) {
       for (let t = 0; t < 2; t++) {
-        c.log(`Executing instance manager ${t === 0 ? 'in attached mode' : 'in detached mode'} from setup`);
-        await new Promise(resolve => setTimeout(resolve, 500));
+        c.log(`Executing instance manager ${t === 0 ? 'in attached mode' : 'in detached mode'} from setup script`);
+        await new Promise(resolve => setTimeout(resolve, 200));
         c.log('');
         await new Promise((resolve, reject) => {
           const child = cp.spawn('node', ['./deployment/node-deployment.js', '--manager', ev.path.repository], {
@@ -1191,70 +1199,92 @@ async function nodeDeploymentSetup() {
 
   // Check if we must change our log file path
   {
-    const startConfig = targetPath ? getProjectConfig(targetPath) : null;
+    const startConfig = await getProjectConfig(targetPath ? targetPath : process.cwd());
 
     if (startConfig && startConfig.logFilePath) {
-      const stat = await asyncTryCatchNull(fs.promises.stat(startConfig.logFilePath));
-      if (stat !== null) {
-        c.logFilePath = startConfig.logFilePath;
+      c.logFilePath = startConfig.logFilePath;
+    } else {
+      const target = path.resolve(process.cwd(), 'deployment', 'deployment.log');
+      if (fs.existsSync(target)) {
+        c.logFilePath = target;
       }
     }
   }
 
-  c.log('Node deployment setup started');
+  c.log('');
+  c.log('Node deployment script');
   c.log('');
   c.log(`   process id: ${process.pid}`);
   c.log(`    parent id: ${process.ppid}`);
   c.log(` current path: ${process.cwd()}`);
-  c.log(`    logs path: ${c.logFilePath}`);
+  c.log(`    logs file: ${c.logFilePath}`);
   if (targetPath) {
-    c.log(`   start path: ${targetPath}`);
+    c.log(` project path: ${targetPath}`);
   }
+  c.log('');
 
   startUserInput();
 
+  let skipFirstPathInput = false;
+  if (!targetPath && fs.existsSync('./hooks') && fs.existsSync('./HEAD') && fs.existsSync('./refs')) {
+    console.log('');
+    console.log('The current working directory has a git bare repository');
+    console.log('');
+    console.log(`Do you want to select "${process.cwd()}"?`);
+    process.stdout.write('\n');
+    const confirm = await waitForUserConfirmation(` > Select this project?`);
+    process.stdout.write('\n');
+    if (confirm) {
+      targetPath = process.cwd();
+      skipFirstPathInput = true;
+    }
+  }
+
   for (let k = 0; k < 1000; k++) {
-    if (k !== 0 || args.length === 0) {
-      process.stdout.write('\nEnter the path for the project repository:\n\n > ');
+    const shouldSkip = k === 0 && skipFirstPathInput;
+    if (!shouldSkip) {
+      if (k !== 0 || args.length === 0) {
+        process.stdout.write('\nEnter the path for the project repository:\n\n > ');
+      }
+      const newPath = k === 0 && args.length === 1 ? targetPath : await waitForUserInput();
+      process.stdout.write('\n');
+      if (!newPath || newPath.length > 256) {
+        process.stdout.write('Invalid path. Try again\n');
+        continue;
+      }
+      const resPath = path.resolve(newPath);
+      if (resPath !== newPath) {
+        process.stdout.write('Expanded path: ');
+      } else {
+        process.stdout.write('Selected path: ');
+      }
+      process.stdout.write(`${resPath}\n`);
+      const stat = await asyncTryCatchNull(fs.promises.stat(resPath));
+      if (stat === null) {
+        process.stdout.write('\nThis directory does not exist yet.\n');
+      } else if (!stat.isDirectory()) {
+        process.stdout.write('\nThis path cannot be used because it is a file.\n');
+        continue;
+      }
+      process.stdout.write('\n');
+      const confirm = await waitForUserConfirmation(stat === null ? ' > Create the new directory for the project?' : ' > Confirm target repository path?');
+      process.stdout.write('\n');
+      if (confirm === false) {
+        continue;
+      }
+      targetPath = resPath;
     }
-    const newPath = k === 0 && args.length === 1 ? targetPath : await waitForUserInput();
-    process.stdout.write('\n');
-    if (!newPath || newPath.length > 256) {
-      process.stdout.write('Invalid path. Try again\n');
-      continue;
-    }
-    const resPath = path.resolve(newPath);
-    if (resPath !== newPath) {
-      process.stdout.write('The path was expanded to: ');
-    } else {
-      process.stdout.write('Selected path: ');
-    }
-    process.stdout.write(`${resPath}\n`);
-    const stat = await asyncTryCatchNull(fs.promises.stat(resPath));
-    if (stat === null) {
-      process.stdout.write('\nThis directory does not exist yet.\n');
-    } else if (!stat.isDirectory()) {
-      process.stdout.write('\nThis path cannot be used because it is a file.\n');
-      continue;
-    }
-    process.stdout.write('\n');
-    const confirm = await waitForUserConfirmation(stat === null ? ' > Create the new directory for the project?' : ' > Confirm target repository path?');
-    process.stdout.write('\n');
-    if (confirm === false) {
-      continue;
-    }
-    targetPath = resPath;
     c.log('');
     for (let m = 0; m < 1000; m++) {
       if (m !== 0) {
         c.log(``);
-        c.log(`Node deployment will execute setup for "${targetPath}" again.`);
+        c.log(`Node deployment will run configuration for "${targetPath}" again.`);
         await new Promise(resolve => setTimeout(resolve, 500));
       }
       try {
         await executeNodeDeploymentSetupForProject(targetPath);
       } catch (err) {
-        c.log(`The setup for "${targetPath}" failed:`);
+        c.log(`Node deployment configuration for "${targetPath}" failed:`);
         c.log('');
         c.log(err.stack);
         c.log('');
