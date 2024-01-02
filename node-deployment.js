@@ -106,29 +106,60 @@ async function nodeDeploymentManager() {
   c.log('');
 
   c.log('Instance manager is starting deployment processor in attached mode');
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      c.log(`Deployment processor failed to start due to spawn timeout`);
-      reject(new Error('Timeout exceeded while starting deployment processor'));
-    }, 3000);
-    const processor = cp.spawn('node', ['./deployment/node-deployment.js', '--processor', projectPath], {
-      cwd: projectPath,
-      stdio: 'ignore'
+
+  let processorRestartCount = 0;
+  await startDeploymentProcessor();
+
+  async function startDeploymentProcessor() {
+    return await new Promise((resolve) => {
+      try {
+        const timer = setTimeout(() => {
+          c.log(`Deployment processor failed to start due to spawn timeout`);
+          resolve(new Error('Timeout exceeded while starting deployment processor'));
+        }, 3000);
+        const processor = cp.spawn('node', ['./deployment/node-deployment.js', '--processor', projectPath], {
+          cwd: projectPath,
+          stdio: 'ignore'
+        });
+        processor.on('spawn', () => {
+          clearTimeout(timer);
+          c.log(`Instance manager started deployment processor at pid ${processor.pid}`);
+          resolve(processor);
+        });
+        processor.on('error', (err) => {
+          clearTimeout(timer);
+          c.log(`Deployment processor failed to start due to error: ${err.message}`);
+          resolve(err);
+        });
+        processor.on('exit', (code) => {
+          c.log(`Deployment processor exited with code ${code}`);
+          if (processorRestartCount === 0) {
+            processorRestartCount++;
+            c.log(`Attempting to restarting deployment processor for the first time`);
+            setTimeout(() => {
+              startDeploymentProcessor();
+            }, 1000);
+          } else if (processorRestartCount === 1) {
+            processorRestartCount++;
+            c.log(`Attempting to restarting deployment processor for the second time`);
+            setTimeout(() => {
+              startDeploymentProcessor();
+            }, 5000);
+          } else {
+            processorRestartCount++;
+            c.log(`Attempting to restarting deployment processor for the ${processorRestartCount} time in 30 seconds...`);
+            setTimeout(() => {
+              c.log(`Attempting to start deployment processor after it exited`);
+              startDeploymentProcessor();
+            }, 30_000);
+          }
+        });
+      } catch (err) {
+        c.log(`Error while starting deployment processor: ${err.message}`);
+        resolve();
+      }
     });
-    processor.on('spawn', () => {
-      clearTimeout(timer);
-      c.log(`Instance manager started deployment processor at pid ${processor.pid}`);
-      resolve(processor);
-    });
-    processor.on('error', (err) => {
-      clearTimeout(timer);
-      c.log(`Deployment processor failed to start due to error: ${err.message}`);
-      reject(err);
-    });
-    processor.on('exit', (code) => {
-      c.log(`Deployment processor exited with code ${code}`);
-    });
-  });
+  }
 
   const instanceFilePath = path.resolve(projectPath, 'deployment', 'instance-path.txt');
   let instancePath = await asyncTryCatchNull(fs.promises.readFile(instanceFilePath, 'utf-8'));
@@ -1088,13 +1119,17 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
       c.log('');
       if (state.instanceId) {
         c.log(`    App Instance: "${state.instanceId}" ${state.instanceRunning ? `running at pid ${state.instancePid}` : 'not executing anymore'}`);
+      } else {
+        c.log(`    App Instance: Not running`);
       }
       c.log(`    Deployment Manager: ${state.managerRunning ? 'running' : 'not running'} (${state.managerRunning ? `at pid ${state.managerPid}` : (state.managerPid ? `last pid was ${state.managerPid}` : 'no pid info')})`);
       c.log(`  Deployment Processor: ${state.processorRunning ? 'running' : 'not running'} (${state.processorRunning ? `at pid ${state.processorPid}` : (state.processorPid ? `last pid was ${state.processorPid}` : 'no pid info')})`);
-      if (state.versionList.length) {
+      if (state.versionList.length === 1) {
+        c.log(`              Versions: ${state.versionList.length} version: "${state.versionList[state.versionList.length - 1].id}"`);
+      } else if (state.versionList.length) {
         c.log(`              Versions: ${state.versionList.length} versions (last was "${state.versionList[state.versionList.length - 1].id}")`);
       } else {
-        c.log(`              Versions: No pipelines have been scheduled yet`);
+        c.log(`              Versions: 0 versions`);
       }
       console.log('');
       console.log(' Options:');
@@ -1110,17 +1145,19 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
     if (state.versionList && state.versionList.length) {
       const last = state.versionList[state.versionList.length - 1];
       if (last.isCurrentInstance && state.instanceRunning) {
-        console.log(` [1] View current instance version "${last.id}" (currently executing at pid ${state.instancePid})`)
+        console.log(` [1] View logs from last instance "${last.id}" (currently executing at pid ${state.instancePid})`)
       } else if (last.startedAt || last.createdAt) {
         const diff = getFormattedHourDifference(new Date(), last.startedAt || last.createdAt);
-        console.log(` [1] View latest created pipeline "${last.id}" (pipeline ${last.startedAt ? 'started' : 'created'} ${diff} hours ago)`);
+        console.log(` [1] View logs from last instance "${last.id}" (pipeline ${last.startedAt ? 'started' : 'created'} ${diff} hours ago)`);
       } else {
-        console.log(` [1] View latest created pipeline "${last.id}"`);
+        console.log(` [1] View logs from last instance "${last.id}"`);
       }
     } else {
-      console.log(' [/] There are no pipelines (no app versions have been pushed)');
+      console.log(' [/] View logs from last instance (disabled because no app versions have been pushed)');
     }
     console.log(` [2] View deployment logs (${state.deploymentLogFileSize ? (state.deploymentLogFileSize / 1024).toFixed(1) + 'KB' : 'not found'})`);
+    const isInstanceRunning = state.versionList && state.versionList.length && state.versionList.find(c => c.isInstanceRunning);
+    console.log(` [3] ${isInstanceRunning ? 'Restart instance' : 'Start instance'}`);
     console.log('');
 
     process.stdout.write('\n > Enter an option: ');
@@ -1129,67 +1166,100 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
     if (selection === '0') {
       console.log('Goodbye');
       process.exit(0);
-    } else {
-      if (selection === '1' && state.versionList && state.versionList.length) {
-        const last = state.versionList[state.versionList.length - 1];
-        console.log(`The last pipeline created is "${last.id}"`);
-        if (last.isCurrentInstance) {
-          if (state.instanceRunning) {
-            console.log(`It is currently running at pid ${state.instancePid} as the current app instance`);
-          } else if (state.instancePid) {
-            console.log(`It is the app instance but it has exited`);
-          } else {
-            console.log(`It is the app instance but it has not started`);
-          }
-        }
-        if (last.createdAt) {
-          const diff = getFormattedHourDifference(new Date(), last.createdAt);
-          console.log(`It was created at ${last.createdAt.toISOString()} (${diff} hours ago)`);
-        }
-        if (last.startedAt) {
-          const diff = getFormattedHourDifference(new Date(), last.startedAt);
-          console.log(`It was started at ${last.startedAt.toISOString()} (${diff} hours ago)`);
-        }
-        console.log('');
-      } else {
-        if (selection === '2') {
-          console.log(`Deployment logs path: ${state.deploymentLogFilePath}`);
-          console.log(`Deployment logs size: ${state.deploymentLogFileSize ? `${(state.deploymentLogFileSize / 1024).toFixed(1)} KB` : '(no file)'}`);
-          const targetLogFile = state.deploymentLogFilePath;
-          const stat = await asyncTryCatchNull(fs.promises.stat(targetLogFile));
-          if (stat === null) {
-            console.log('The file does not exist and therefore cannot be read.');
-            continue;
-          }
-          process.stdout.write(`\nLast 100 lines of "${targetLogFile}"\n\n`);
-          await new Promise(resolve => setTimeout(resolve, 200));
-          process.stdout.write('\n');
-          await new Promise(resolve => setTimeout(resolve, 200));
-          process.stdout.write('\n');
-          await new Promise(async (resolve) => {
-            try {
-              const child = cp.spawn('tail', ['-n', '100', targetLogFile], {
-                cwd: path.dirname(targetLogFile),
-                stdio: ['ignore', 'inherit', 'inherit']
-              });
-              child.on('error', (err) => {
-                c.log(`Could not execute the "tail" command: ${err.message}`);
-                resolve();
-              });
-              child.on('exit', () => resolve());
-            } catch (err) {
-              c.log(`Failed while starting "tail" command: ${err.message}`);
-              resolve();
-            }
-          });
-          process.stdout.write('\n');
-          await new Promise(resolve => setTimeout(resolve, 500));
-          process.stdout.write(`\nLog finished\n\n`);
+    }
+
+    if (selection === '1' && state.versionList && state.versionList.length) {
+      const last = state.versionList[state.versionList.length - 1];
+      console.log(`The last pipeline created is "${last.id}"`);
+      if (last.isCurrentInstance) {
+        if (state.instanceRunning) {
+          console.log(`It is currently running at pid ${state.instancePid} as the current app instance`);
+        } else if (state.instancePid) {
+          console.log(`It is the app instance but it has exited`);
         } else {
-          console.log('Option not recognized as valid input');
+          console.log(`It is the app instance but it has not started`);
         }
       }
+      if (last.createdAt) {
+        const diff = getFormattedHourDifference(new Date(), last.createdAt);
+        console.log(`It was created at ${last.createdAt.toISOString()} (${diff} hours ago)`);
+      }
+      if (last.startedAt) {
+        const diff = getFormattedHourDifference(new Date(), last.startedAt);
+        console.log(`It was started at ${last.startedAt.toISOString()} (${diff} hours ago)`);
+      }
+      console.log('');
       continue;
+    }
+    if (selection === '2') {
+      console.log(`Deployment logs path: ${state.deploymentLogFilePath}`);
+      console.log(`Deployment logs size: ${state.deploymentLogFileSize ? `${(state.deploymentLogFileSize / 1024).toFixed(1)} KB` : '(no file)'}`);
+      const targetLogFile = state.deploymentLogFilePath;
+      const stat = await asyncTryCatchNull(fs.promises.stat(targetLogFile));
+      if (stat === null) {
+        console.log('The file does not exist and therefore cannot be read.');
+        continue;
+      }
+      process.stdout.write(`\nPrinting the last 100 lines:\n\n`);
+      await new Promise(resolve => setTimeout(resolve, 200));
+      process.stdout.write('\n');
+      await new Promise(resolve => setTimeout(resolve, 200));
+      process.stdout.write('\n');
+      await new Promise(async (resolve) => {
+        try {
+          const child = cp.spawn('tail', ['-n', '100', targetLogFile], {
+            cwd: path.dirname(targetLogFile),
+            stdio: ['ignore', 'inherit', 'inherit']
+          });
+          child.on('error', (err) => {
+            c.log(`Could not execute the "tail" command: ${err.message}`);
+            resolve();
+          });
+          child.on('exit', () => resolve());
+        } catch (err) {
+          c.log(`Failed while starting "tail" command: ${err.message}`);
+          resolve();
+        }
+      });
+      process.stdout.write('\n');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      process.stdout.write(`\nLog finished\n\n`);
+
+    }
+    if (selection === '3') {
+      if (!state.versionList || !state.versionList.length) {
+        console.log('');
+        console.log('There are no versions to start the app instance from');
+        console.log('');
+        continue;
+      }
+      const last = state.versionList[state.versionList.length - 1];
+      console.log('');
+      console.log(`The last version is "${last.id}"`);
+      console.log('');
+      const confirm = await waitForUserConfirmation('Do you want to restart at the last version?');
+      if (confirm) {
+        console.log(`Sending "${id}" to instance manager`);
+        try {
+          const response = await fetch(`http://localhost:${config.managerPort}/`, {
+            method: 'POST',
+            body: JSON.stringify({ id, repositoryPath })
+          });
+          const text = await response.text();
+          if (text) {
+            console.log(`Instance manager response: ${text}`);
+          }
+          if (!response.ok) {
+            throw new Error('Instance manager responded with error');
+          }
+          console.log('Successfully sent restart request')
+        } catch (err) {
+          console.log(`Restart request failed: ${err.message}`);
+        }
+        continue;
+      } else {
+        console.log('That option is not implemented yet');
+      }
     }
   }
 }
@@ -1406,8 +1476,8 @@ function startUserInput() {
 
 function getFormattedHourDifference(date1, date2) {
   const delta = Math.abs(date1.getTime() - date2.getTime());
-  const s = delta / 1000;
-  const m = s / 60;
-  const h = m / 60;
-  return [h, m, s].map(n => Math.floor(n).toString().padStart(2, '0'));
+  const hours = Math.floor(delta / (1000 * 60 * 60));
+  const minutes = Math.floor((delta % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((delta % (1000 * 60)) / 1000);
+  return `${hours}:${minutes}:${seconds}`;
 }
