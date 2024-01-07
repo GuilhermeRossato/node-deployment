@@ -119,7 +119,7 @@ async function nodeDeploymentManager() {
         }, 3000);
         const processor = cp.spawn('node', ['./deployment/node-deployment.js', '--processor', projectPath], {
           cwd: projectPath,
-          stdio: 'ignore'
+          stdio: ['ignore', 'ignore', 'ignore']
         });
         processor.on('spawn', () => {
           clearTimeout(timer);
@@ -135,19 +135,19 @@ async function nodeDeploymentManager() {
           c.log(`Deployment processor exited with code ${code}`);
           if (processorRestartCount === 0) {
             processorRestartCount++;
-            c.log(`Attempting to restarting deployment processor for the first time`);
+            c.log(`Attempting to restart deployment processor for the first time`);
             setTimeout(() => {
               startDeploymentProcessor();
             }, 1000);
           } else if (processorRestartCount === 1) {
             processorRestartCount++;
-            c.log(`Attempting to restarting deployment processor for the second time`);
+            c.log(`Attempting to restart deployment processor for the second time`);
             setTimeout(() => {
               startDeploymentProcessor();
             }, 5000);
           } else {
             processorRestartCount++;
-            c.log(`Attempting to restarting deployment processor for the ${processorRestartCount} time in 30 seconds...`);
+            c.log(`Attempting to restart deployment processor for the ${processorRestartCount} time in 30 seconds...`);
             setTimeout(() => {
               c.log(`Attempting to start deployment processor after it exited`);
               startDeploymentProcessor();
@@ -183,14 +183,14 @@ async function nodeDeploymentManager() {
         }
         await new Promise(resolve => setTimeout(resolve, i === 0 ? 100 : i === 1 ? 200 : 300));
       }
+      if (instance) {
+        c.log(`Could not stop instance process running at "${instanceBeingReplaced}"`);
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
-    if (instance) {
-      c.log(`Could not stop instance process running at "${instanceBeingReplaced}"`);
-      return;
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
     if (instanceBeingReplaced !== instancePath) {
-      c.log(`Aborting restart request for "${id}" because a newer pipeline started ("${process.basename(instancePath)}")`);
+      c.log(`Aborting restart request for "${id}" because a newer version started ("${process.basename(instancePath)}")`);
       return;
     }
     instancePath = targetInstancePath;
@@ -198,12 +198,12 @@ async function nodeDeploymentManager() {
     await new Promise(resolve => setTimeout(resolve, 100));
     const instancePidPath = path.resolve(projectPath, 'deployment', 'instance.pid');
     const instanceLogPath = path.resolve(targetInstancePath, 'instance.log');
-    await fs.promises.writeFile(instanceLogPath, `Started at ${new Date().toISOString()}\n`, 'utf-8');
+    await fs.promises.writeFile(instanceLogPath, `Process started at ${new Date().toISOString()}\n`, 'utf-8');
 
     await new Promise(resolve => setTimeout(resolve, 100));
 
     if (instance !== null) {
-      c.log(`Previous instance is still running, attempting to stop it`);
+      c.log(`Previous instance is still running, attempting to stop it again`);
       expectInstanceClose = true;
       instance.kill();
       for (let i = 0; i < 20; i++) {
@@ -212,19 +212,26 @@ async function nodeDeploymentManager() {
           break;
         }
       }
-    }
-    if (instance !== null) {
-      c.log(`Restart request for "${id}" failed because another instance is executing`);
-      if (instance && instance.pid) {
-        c.log(`The instance that caused this has process id ${instance.pid}`);
+      if (instance !== null) {
+        c.log(`Restart request for "${id}" failed because previous instance could not be stopped`);
+        if (instance && instance.pid) {
+          c.log(`The instance that caused this has process id ${instance.pid}`);
+        } else {
+          c.log(`The instance that caused this has no process id`);
+        }
+        return;
       }
-      return;
     }
     if (instancePath !== targetInstancePath) {
-      c.log(`Aborting restart request for "${id}" because the instance path changed while starting at "${instanceBeingReplaced}"`);
+      c.log(`Aborting restart request for "${id}" because the instance path was changed before starting.`);
+      c.log(`The path changed to "${instancePath}" while it was supposed to be "${targetInstancePath}"`);
       return;
     }
-    await fs.promises.writeFile(instanceFilePath, targetInstancePath, 'utf-8');
+    const writeError = await asyncTryCatchNull(fs.promises.writeFile(instanceFilePath, targetInstancePath, 'utf-8'));
+    if (writeError instanceof Error) {
+      c.log(`Restart request failed for "${id}" while writing to "${instanceFilePath}": ${writeError.message}`);
+      return;
+    }
     const startTime = new Date();
     expectInstanceClose = false;
     instance = cp.spawn('npm', ['run', 'start'], {
@@ -249,7 +256,8 @@ async function nodeDeploymentManager() {
       instance = null;
     });
     instance.on('spawn', () => {
-      c.log(`Instance from "${id}" started with pid ${instance.pid}\nInstance log path: ${instanceLogPath}`);
+      c.log(`Instance from "${id}" started with pid ${instance.pid}`);
+      c.log(`Instance log path: ${instanceLogPath}`);
       fs.promises.writeFile(instancePidPath, instance.pid.toString(), 'utf-8');
     });
     instance.stdout.on('data', (data) => fs.promises.appendFile(instanceLogPath, data));
@@ -1107,6 +1115,56 @@ async function getProjectConfigurationMenuState(projectPath, config) {
     instanceId: instancePathText ? path.basename(instancePathText.trim()) : null,
     instancePid: instanceState.pid,
     instanceRunning: instanceState.running,
+    instancePath: instancePathText || null,
+  }
+}
+
+async function menu(options) {
+  while (true) {
+    const list = Object.keys(options);
+    process.stdout.write(`\n`);
+    process.stdout.write(`[0] Exit program\n`);
+    for (let i = 0; i < list.length; i++) {
+      process.stdout.write(`[${i + 1}] ${list[i]}\n`);
+    }
+    process.stdout.write('\n > Enter an option: ');
+    const index = await waitForUserInput();
+    process.stdout.write('\n');
+    if (index === 'x') {
+      return;
+    }
+    if (index === '0') {
+      process.exit(0);
+    }
+    if (!index) {
+      process.stdout.write('Invalid option: empty\n');
+      continue;
+    }
+    if (!list[index]) {
+      process.stdout.write('Invalid option: not found\n');
+      continue;
+    }
+    if (isNaN(parseInt(index)) || parseInt(index).toString() !== index) {
+      process.stdout.write('Invalid option: not a number\n');
+      continue;
+    }
+    const optionKey = list[parseInt(index) - 1];
+    if (!optionKey) {
+      process.stdout.write('Invalid option: out of bounds\n');
+      continue;
+    }
+    const f = options[optionKey];
+    if (!f) {
+      console.log(`No handler for "${optionKey}"`);
+      continue;
+    }
+    try {
+      if (true === await f()) {
+        break;
+      }
+    } catch (err) {
+      console.log(`Processing failed for option "${optionKey}": ${err.stack}`);
+    }
   }
 }
 
@@ -1125,11 +1183,11 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
       c.log(`    Deployment Manager: ${state.managerRunning ? 'running' : 'not running'} (${state.managerRunning ? `at pid ${state.managerPid}` : (state.managerPid ? `last pid was ${state.managerPid}` : 'no pid info')})`);
       c.log(`  Deployment Processor: ${state.processorRunning ? 'running' : 'not running'} (${state.processorRunning ? `at pid ${state.processorPid}` : (state.processorPid ? `last pid was ${state.processorPid}` : 'no pid info')})`);
       if (state.versionList.length === 1) {
-        c.log(`              Versions: ${state.versionList.length} version: "${state.versionList[state.versionList.length - 1].id}"`);
+        c.log(`    Project Versions: ${state.versionList.length} version: "${state.versionList[state.versionList.length - 1].id}"`);
       } else if (state.versionList.length) {
-        c.log(`              Versions: ${state.versionList.length} versions (last was "${state.versionList[state.versionList.length - 1].id}")`);
+        c.log(`    Project Versions: ${state.versionList.length} versions (last was "${state.versionList[state.versionList.length - 1].id}")`);
       } else {
-        c.log(`              Versions: 0 versions`);
+        c.log(`    Project Versions: 0 versions`);
       }
       console.log('');
       console.log(' Options:');
@@ -1138,112 +1196,153 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
       console.log('Failed while retrieving project state:');
       console.log(err.stack);
       console.log('');
-      console.log(`Node Deployment Configuration Menu for: ${projectPath}`);
-    }
-    console.log('');
-    console.log(' [0] Exit program');
-    if (state.versionList && state.versionList.length) {
-      const last = state.versionList[state.versionList.length - 1];
-      if (last.isCurrentInstance && state.instanceRunning) {
-        console.log(` [1] View logs from last instance "${last.id}" (currently executing at pid ${state.instancePid})`)
-      } else if (last.startedAt || last.createdAt) {
-        const diff = getFormattedHourDifference(new Date(), last.startedAt || last.createdAt);
-        console.log(` [1] View logs from last instance "${last.id}" (pipeline ${last.startedAt ? 'started' : 'created'} ${diff} hours ago)`);
-      } else {
-        console.log(` [1] View logs from last instance "${last.id}"`);
-      }
-    } else {
-      console.log(' [/] View logs from last instance (disabled because no app versions have been pushed)');
-    }
-    console.log(` [2] View deployment logs (${state.deploymentLogFileSize ? (state.deploymentLogFileSize / 1024).toFixed(1) + 'KB' : 'not found'})`);
-    const isInstanceRunning = state.versionList && state.versionList.length && state.versionList.find(c => c.isInstanceRunning);
-    console.log(` [3] ${isInstanceRunning ? 'Restart instance' : 'Start instance'}`);
-    console.log('');
-
-    process.stdout.write('\n > Enter an option: ');
-    const selection = await waitForUserInput();
-    process.stdout.write('\n');
-    if (selection === '0') {
-      console.log('Goodbye');
-      process.exit(0);
-    }
-
-    if (selection === '1' && state.versionList && state.versionList.length) {
-      const last = state.versionList[state.versionList.length - 1];
-      console.log(`The last pipeline created is "${last.id}"`);
-      if (last.isCurrentInstance) {
-        if (state.instanceRunning) {
-          console.log(`It is currently running at pid ${state.instancePid} as the current app instance`);
-        } else if (state.instancePid) {
-          console.log(`It is the app instance but it has exited`);
-        } else {
-          console.log(`It is the app instance but it has not started`);
-        }
-      }
-      if (last.createdAt) {
-        const diff = getFormattedHourDifference(new Date(), last.createdAt);
-        console.log(`It was created at ${last.createdAt.toISOString()} (${diff} hours ago)`);
-      }
-      if (last.startedAt) {
-        const diff = getFormattedHourDifference(new Date(), last.startedAt);
-        console.log(`It was started at ${last.startedAt.toISOString()} (${diff} hours ago)`);
-      }
+      console.log(`Node Deployment Configuration Menu`);
       console.log('');
-      continue;
     }
-    if (selection === '2') {
-      console.log(`Deployment logs path: ${state.deploymentLogFilePath}`);
-      console.log(`Deployment logs size: ${state.deploymentLogFileSize ? `${(state.deploymentLogFileSize / 1024).toFixed(1)} KB` : '(no file)'}`);
-      const targetLogFile = state.deploymentLogFilePath;
-      const stat = await asyncTryCatchNull(fs.promises.stat(targetLogFile));
-      if (stat === null) {
-        console.log('The file does not exist and therefore cannot be read.');
-        continue;
-      }
-      process.stdout.write(`\nPrinting the last 100 lines:\n\n`);
-      await new Promise(resolve => setTimeout(resolve, 200));
-      process.stdout.write('\n');
-      await new Promise(resolve => setTimeout(resolve, 200));
-      process.stdout.write('\n');
+
+    async function tailLog(targetFile, lineCount = 100, follow) {
       await new Promise(async (resolve) => {
         try {
-          const child = cp.spawn('tail', ['-n', '100', targetLogFile], {
-            cwd: path.dirname(targetLogFile),
+          const args = follow ? ['--lines', lineCount.toString(), '--follow', targetFile] : ['-lines', '100', targetFile];
+          const child = cp.spawn('tail', args, {
+            cwd: path.dirname(targetFile),
             stdio: ['ignore', 'inherit', 'inherit']
           });
           child.on('error', (err) => {
-            c.log(`Could not execute the "tail" command: ${err.message}`);
+            console.log(`Could not execute the "tail" command: ${err.message}`);
             resolve();
           });
           child.on('exit', () => resolve());
         } catch (err) {
-          c.log(`Failed while starting "tail" command: ${err.message}`);
+          console.log(`Failed while starting "tail" command: ${err.message}`);
           resolve();
         }
       });
-      process.stdout.write('\n');
-      await new Promise(resolve => setTimeout(resolve, 500));
-      process.stdout.write(`\nLog finished\n\n`);
-
     }
-    if (selection === '3') {
-      if (!state.versionList || !state.versionList.length) {
+
+    await menu({
+      'View instance logs': async () => {
+        if (!state.versionList || !state.versionList.length) {
+          console.log('Cannot read instance logs because there are no instances on this project');
+          console.log('  No changes have been pushed to this repository yet');
+          console.log('');
+          return true;
+        }
+        const instanceList = state.versionList.filter(version => typeof version.logFileSize === 'number' && version.logFileSize > 0);
+        if (instanceList.length === 0) {
+          console.log('Cannot read instance logs because there is no instance log file on this project');
+          console.log(`  There are ${state.versionList.length} versions but no instances on this project`);
+          console.log('');
+          return true;
+        }
+        const runningInstance = state.versionList.find(c => c.isInstanceRunning);
+        const lastInstance = instanceList[instanceList.length - 1];
+        if (runningInstance && runningInstance !== lastInstance) {
+          console.log('');
+          console.log(`Warning: The running instance "${runningInstance.id}" is not the latest deployed version ("${lastInstance.id}")`);
+          console.log('');
+        }
+        const logFilePath = runningInstance ? runningInstance.logFilePath : lastInstance.logFilePath;
+        const logStat = await asyncTryCatchNull(fs.promises.stat(logFilePath));
+        if (logStat instanceof Error || logStat === null) {
+          console.log('');
+          console.log(`Could not load log file at "${logFilePath}"`);
+          console.log('');
+          return true;
+        }
+
         console.log('');
-        console.log('There are no versions to start the app instance from');
+        console.log(`Log file at "${logFilePath}" has ${(logStat.size / 1024).toFixed(0)} KB and was last updated at ${logStat.mtime.toISOString()}.`);
+
+        await menu({
+          "Print last 50 lines": async () => {
+            await tailLog(logFilePath, 50);
+          },
+          "Print last 100 lines": async () => {
+            await tailLog(logFilePath, 100);
+          },
+          "Watch log (print as it grows)": async () => {
+            await tailLog(logFilePath, 100, true);
+          },
+          "Go back to previous menu": async () => true
+        })
+        return true;
+      },
+      'View deployment logs': async () => {
+        const logFilePath = state.deploymentLogFilePath;
+        const logStat = await asyncTryCatchNull(fs.promises.stat(logFilePath));
+        if (logStat instanceof Error || logStat === null) {
+          console.log('');
+          console.log(`Could not load log file at "${logFilePath}"`);
+          console.log('');
+          return true;
+        }
+
         console.log('');
-        continue;
-      }
-      const last = state.versionList[state.versionList.length - 1];
-      console.log('');
-      console.log(`The last version is "${last.id}"`);
-      console.log('');
-      const confirm = await waitForUserConfirmation('Do you want to restart at the last version?');
-      if (confirm) {
-        console.log(`Sending "${id}" to instance manager`);
-        try {
+        console.log(`Log file at "${logFilePath}" has ${(logStat.size / 1024).toFixed(0)} KB and was last updated at ${logStat.mtime.toISOString()}.`);
+        console.log('');
+
+        await menu({
+          "Print last 50 lines": async () => {
+            await tailLog(logFilePath, 50);
+          },
+          "Print last 100 lines": async () => {
+            await tailLog(logFilePath, 100);
+          },
+          "Watch log (print as it grows)": async () => {
+            await tailLog(logFilePath, 100, true);
+          },
+          "Go back to previous menu": async () => true
+        });
+        return true;
+      },
+      'Instance management': async () => {
+        if (!state.versionList || !state.versionList.length) {
+          console.log('Cannot manage app instance because the project has no published versions');
+          console.log('  No changes have been pushed to this repository');
+          console.log('');
+          return true;
+        }
+        const runningInstance = state.versionList.find(c => c.isInstanceRunning);
+        if (runningInstance) {
+          console.log(`The version of the running instance is "${runningInstance.id}"`);
+          console.log('');
+        }
+        const instancePidPath = path.resolve(projectPath, 'deployment', 'instance.pid');
+        const instancePidText = await asyncTryCatchNull(fs.promises.readFile(instancePidPath, 'utf-8'));
+        let isRunning = false;
+        if (instancePidText === null || instancePidText instanceof Error) {
+          console.log(`Could not read instance pid at "${instancePidPath}": ${instancePidText === null ? 'it does not exist' : 'an error occured'}`);
+          console.log('');
+        } else {
+          isRunning = await isProcessRunningByPid(instancePidText);
+          console.log(`The instance pid is ${instancePidText.trim()} and it ${isRunning ? 'is running' : 'is not running'}`);
+          console.log('');
+        }
+
+        const instancePathFilePath = path.resolve(projectPath, 'deployment', 'instance-path.txt');
+        const instanceFilePath = await asyncTryCatchNull(fs.promises.readFile(instancePathFilePath, 'utf-8'));
+        if (instanceFilePath === null || instanceFilePath instanceof Error) {
+          console.log('');
+          console.log(`Could not read instance path from "${instanceFilePath}": ${instanceFilePath === null ? 'it does not exist' : 'an error occured'}`);
+          console.log('');
+        } else {
+          console.log('');
+          console.log(`Current instance file path is "${instanceFilePath.trim()}"`);
+          console.log('');
+        }
+
+        let options = {};
+        options['Refresh state'] = async () => { }
+
+        const lastInstanceVersion = instanceFilePath ? path.basename(instanceFilePath) : null;
+        const targetId = lastInstanceVersion ? lastInstanceVersion : state.versionList[state.versionList.length - 1].id
+
+        const restartInstance = async () => {
+          const instancePidStat = await asyncTryCatchNull(fs.promises.stat(instancePidPath, 'utf-8'));
           const response = await fetch(`http://localhost:${config.managerPort}/`, {
             method: 'POST',
-            body: JSON.stringify({ id, repositoryPath })
+            body: JSON.stringify({ repositoryPath: instanceFilePath ? instanceFilePath : state.versionList[state.versionList.length - 1].repositoryPath })
           });
           const text = await response.text();
           if (text) {
@@ -1252,15 +1351,162 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
           if (!response.ok) {
             throw new Error('Instance manager responded with error');
           }
-          console.log('Successfully sent restart request')
-        } catch (err) {
-          console.log(`Restart request failed: ${err.message}`);
+          let i;
+          for (i = 0; i < 49; i++) {
+            if (i === 5) {
+              console.log(`Waiting for instance pid file to update at "${instancePidPath}"`);
+            }
+            const newInstancePidStat = await asyncTryCatchNull(fs.promises.stat(instancePidPath, 'utf-8'));
+            // was nothing and became something
+            if ((instancePidStat === null || instancePidStat instanceof Error) && newInstancePidStat instanceof fs.Stat) {
+              break;
+            }
+            // was something and changed
+            if (instancePidStat instanceof fs.Stat && newInstancePidStat instanceof fs.Stat && instancePidStat.mtimeMs !== newInstancePidStat.mtimeMs) {
+              break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 200));
+            if (i === 49) {
+              console.log(`Instance pid file at "${instancePidPath}" was not updated`);
+              return;
+            }
+          }
+          const pid = await fs.promises.readFile(instancePidPath, 'utf-8');
+          console.log(`New instance pid is ${pid}`);
+          return true;
         }
-        continue;
-      } else {
-        console.log('That option is not implemented yet');
-      }
-    }
+        if (isRunning) {
+          options[`Restart instance process at "${targetId}"`] = restartInstance;
+        } else {
+          options[`Start instance process at "${targetId}"`] = restartInstance;
+        }
+        options['Go back to previous menu'] = async () => true;
+        await menu(options);
+        return true;
+      },
+      'Deployment management': async () => {
+        console.log('');
+        for (const name of ['processor', 'manager']) {
+          const pidFilePath = path.resolve(projectPath, 'deployment', name + '.pid');
+          const pid = await asyncTryCatchNull(fs.promises.readFile(pidFilePath, 'utf-8'));
+          process.stdout.write(` ${name[0].toUpperCase()}${name.substring(1)} pid: `);
+          if (typeof pid === 'string' && pid) {
+            if (await isProcessRunningByPid(pid)) {
+              process.stdout.write(pid + ' (running)\n');
+            } else {
+              process.stdout.write('was' + pid + ' (not running)\n');
+            }
+          } else if (pid === null) {
+            process.stdout.write('none (never ran)\n');
+          } else if (pid instanceof Error) {
+            process.stdout.write('error while reading\n');
+          } else {
+            process.stdout.write('Unknown\n');
+          }
+        }
+        console.log('');
+        async function stopProcessByName(name) {
+          const pidFilePath = path.resolve(projectPath, 'deployment', name + '.pid');
+          const pid = await asyncTryCatchNull(fs.promises.readFile(pidFilePath, 'utf-8'));
+          if (!(pid && typeof pid === 'string')) {
+            console.log(`${name[0].toUpperCase()}${name.substring(1)} process does not exist`);
+            return;
+          }
+          if (!await isProcessRunningByPid(pid)) {
+            console.log(`${name[0].toUpperCase()}${name.substring(1)} process is stopped`);
+            return
+          }
+          console.log(`Stopping ${name[0].toUpperCase()}${name.substring(1)} process at pid ${pid}`);
+          try {
+            process.kill(pid);
+          } catch (err) {
+            console.log(`Error while killing the ${name} process: ${err.message}`);
+          }
+          for (let i = 0; i < 12; i++) {
+            await new Promise(resolve => setTimeout(resolve, 250));
+            if (!await isProcessRunningByPid(pid)) {
+              console.log(`${name[0].toUpperCase()}${name.substring(1)} process has stopped`);
+              return;
+            }
+          }
+          console.log(`${name[0].toUpperCase()}${name.substring(1)} process is still running 3 seconds after attempting to kill it`);
+        }
+        async function startProcessByName(name) {
+          const pidFilePath = path.resolve(projectPath, 'deployment', name + '.pid');
+          const pid = await asyncTryCatchNull(fs.promises.readFile(pidFilePath, 'utf-8'));
+          if (pid && typeof pid === 'string') {
+            if (await isProcessRunningByPid(pid)) {
+              console.log(`Cannot start ${name} process because it is already executing at pid ${pid}`);
+              return;
+            }
+          }
+          console.log(`Starting ${name[0].toUpperCase()}${name.substring(1)} process`);
+          const child = cp.spawn('node', ['./deployment/node-deployment.js', `--${name}`, projectPath], {
+            cwd: projectPath,
+            env: process.env,
+            stdio: 'ignore',
+            detached: true,
+          });
+          child.unref();
+          let i;
+          for (i = 0; i < 10; i++) {
+            if (i === 5) {
+              console.log(`Waiting for ${name} pid file to update at "${pidFilePath}"`);
+            }
+            const newPid = await asyncTryCatchNull(fs.promises.readFile(pidFilePath, 'utf-8'));
+            if (newPid && typeof newPid === 'string' && newPid !== pid) {
+              break;
+            }
+            if (i === 49) {
+              console.log(`${name} pid file at "${pidFilePath}" was not updated`);
+              return;
+            }
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+          const newPid = await fs.promises.readFile(pidFilePath, 'utf-8');
+          if (newPid && typeof newPid === 'string') {
+            console.log(`The ${name} process started with pid ${newPid}`);
+            await new Promise(resolve => setTimeout(resolve, 400));
+            if (!await isProcessRunningByPid(newPid)) {
+              console.log(`It has exited and is no longer executing`);
+            }
+            await new Promise(resolve => setTimeout(resolve, 400));
+            if (!await isProcessRunningByPid(newPid)) {
+              console.log(`It has exited and is no longer executing`);
+            }
+          }
+        }
+        const options = {
+          "Go back": async () => true,
+          "Refresh": async () => { },
+          "Start (or restart) deployment processor process": async () => {
+            await stopProcessByName('processor');
+            await startProcessByName('processor');
+          },
+          "Start (or restart) instance manager process": async () => {
+            await stopProcessByName('manager');
+            await startProcessByName('manager');
+          },
+          "Stop deployment processor process": async () => {
+            await stopProcessByName('processor');
+          },
+          "Stop instance manager process": async () => {
+            await stopProcessByName('manager');
+          }
+        };
+        await menu(options);
+        return true;
+      },
+      'Configuration': async () => {
+        console.log('Sorry, this feature is not currently implemented\n');
+        console.log('You may try to edit the config manually\n');
+        console.log(`  Config path: ${path.resolve(projectPath, 'deployment')}`);
+        return true;
+      },
+      'Finish program': async () => {
+        return true;
+      },
+    })
   }
 }
 
