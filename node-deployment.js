@@ -31,12 +31,12 @@ const c = {
   lastFailFilePath: null,
   prefix: isScheduler ? ' [sc]' : isManager ? ' [ma]' : isProcessor ? ' [pr]' : ' [se]',
   log: (...args) => {
-    const begining = `[${new Date().toISOString()}]${c.prefix} `;
+    const prefix = `[${getDateStringConfigAware(new Date())}]${c.prefix} `;
     const parts = args.map(
       arg => arg instanceof Error ?
         arg.stack :
         typeof arg === 'string' ?
-          arg.split('\n').map(line => begining + line).join('\n') :
+          arg.split('\n').map(line => prefix + line).join('\n') :
           arg.toString()
     );
     const message = `${parts.join(' ')}\n`;
@@ -119,8 +119,14 @@ async function nodeDeploymentManager() {
         }, 3000);
         const processor = cp.spawn('node', ['./deployment/node-deployment.js', '--processor', projectPath], {
           cwd: projectPath,
-          stdio: ['ignore', 'ignore', 'ignore']
+          stdio: ['ignore', 'pipe', 'pipe']
         });
+        processor.stderr.on('data', (data) => {
+          //console.log(`Deployment processor: ${data.toString()}`);
+        })
+        processor.stdout.on('data', (data) => {
+          //console.log(`Deployment processor: ${data.toString()}`);
+        })
         processor.on('spawn', () => {
           clearTimeout(timer);
           c.log(`Instance manager started deployment processor at pid ${processor.pid}`);
@@ -198,7 +204,7 @@ async function nodeDeploymentManager() {
     await new Promise(resolve => setTimeout(resolve, 100));
     const instancePidPath = path.resolve(projectPath, 'deployment', 'instance.pid');
     const instanceLogPath = path.resolve(targetInstancePath, 'instance.log');
-    await fs.promises.writeFile(instanceLogPath, `Process started at ${new Date().toISOString()}\n`, 'utf-8');
+    await fs.promises.writeFile(instanceLogPath, `Process started at ${getDateStringConfigAware(new Date())}\n`, 'utf-8');
 
     await new Promise(resolve => setTimeout(resolve, 100));
 
@@ -571,7 +577,7 @@ async function nodeDeploymentPostUpdate() {
   } else {
     c.log(`Node deployment post update started`);
   }
-  const id = new Date().toISOString().replace('T', '_').substring(0, 23).replace(/\:/g, '-').replace('.', '_');
+  const id = getDateStringConfigAware(new Date()).replace(' ', '_').replace('T', '_').substring(0, 23).replace(/\:/g, '-').replace('.', '_');
   const repositoryPath = path.resolve(projectPath, 'deployment', 'versions', id);
   c.log(`Creating new deployment folder with id "${id}"`);
   await fs.promises.mkdir(repositoryPath, { recursive: true });
@@ -604,16 +610,48 @@ async function nodeDeploymentPostUpdate() {
   }
   try {
     c.log(`Sending pipeline "${id}" to processor`);
-    const response = await fetch(`http://localhost:${config.processorPort}/`, {
-      method: 'POST',
-      body: JSON.stringify({ id, repositoryPath })
-    });
-    const text = await response.text();
-    if (text) {
-      c.log(`Deployment processor response: ${text}`);
+    async function sendToProcessor() {
+      const response = await fetch(`http://localhost:${config.processorPort}/`, {
+        method: 'POST',
+        body: JSON.stringify({ id, repositoryPath })
+      });
+      const text = await response.text();
+      if (text) {
+        c.log(`Deployment processor response: ${text}`);
+      }
+      if (!response.ok) {
+        throw new Error('Deployment processor responded with error');
+      }
     }
-    if (!response.ok) {
-      throw new Error('Deployment processor responded with error');
+    try {
+      await sendToProcessor();
+    } catch (err) {
+      if (!err || err.message !== 'fetch failed') {
+        throw err;
+      }
+      const pidFilePath = path.resolve(projectPath, 'deployment', 'manager.pid');
+      const pid = await asyncTryCatchNull(fs.promises.readFile(pidFilePath, 'utf-8'));
+      if (!(pid && typeof pid === 'string')) {
+        c.log('Request to processor failed and instance manager is not running');
+        throw err;
+      }
+      c.log('Request to processor failed, verifying if manager is running...');
+      if (await isProcessRunningByPid(pid.trim())) {
+        c.log('Manager is running but deployment processor request failed to connect');
+        throw err;
+      }
+      c.log('Manager is not running, attempting to start it detached');
+      const child = cp.spawn('node', ['./deployment/node-deployment.js', '--manager', projectPath], {
+        cwd: projectPath,
+        env: process.env,
+        stdio: 'ignore',
+        detached: true,
+      });
+      child.unref();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      c.log('Attempting to send request to processor again...');
+      await sendToProcessor();
+      return;
     }
     c.log(`Pipeline ${id} scheduled sucessfully`);
   } catch (err) {
@@ -656,9 +694,13 @@ async function waitForUserConfirmation(question) {
   return false;
 }
 
-async function getProjectConfig(projectPath) {
+async function getProjectConfig(projectPath, forceRefresh = false) {
   if (!projectPath) {
     return null;
+  }
+
+  if (!forceRefresh && global.cachedConfig) {
+    return global.cachedConfig;
   }
 
   const configPath = path.resolve(projectPath, 'deployment', 'config.json');
@@ -671,7 +713,9 @@ async function getProjectConfig(projectPath) {
     return null;
   }
 
-  return JSON.parse(configText);
+  global.cachedConfig = JSON.parse(configText);
+
+  return global.cachedConfig;
 }
 
 async function evaluateProjectPath(projectPath) {
@@ -902,7 +946,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
       if (!running) {
         willStartManager = true;
         c.log('Notice: The instance manager process (manages app instances) is not executing');
-        c.log('It will be started so that the app instance can be executed');
+        c.log('Starting it so that the app instance can be handled');
         c.log('');
       }
     }
@@ -1140,15 +1184,12 @@ async function menu(options) {
       process.stdout.write('Invalid option: empty\n');
       continue;
     }
-    if (!list[index]) {
-      process.stdout.write('Invalid option: not found\n');
-      continue;
-    }
     if (isNaN(parseInt(index)) || parseInt(index).toString() !== index) {
       process.stdout.write('Invalid option: not a number\n');
       continue;
     }
-    const optionKey = list[parseInt(index) - 1];
+    const id = parseInt(index) - 1;
+    const optionKey = list[id];
     if (!optionKey) {
       process.stdout.write('Invalid option: out of bounds\n');
       continue;
@@ -1183,11 +1224,11 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
       c.log(`    Deployment Manager: ${state.managerRunning ? 'running' : 'not running'} (${state.managerRunning ? `at pid ${state.managerPid}` : (state.managerPid ? `last pid was ${state.managerPid}` : 'no pid info')})`);
       c.log(`  Deployment Processor: ${state.processorRunning ? 'running' : 'not running'} (${state.processorRunning ? `at pid ${state.processorPid}` : (state.processorPid ? `last pid was ${state.processorPid}` : 'no pid info')})`);
       if (state.versionList.length === 1) {
-        c.log(`    Project Versions: ${state.versionList.length} version: "${state.versionList[state.versionList.length - 1].id}"`);
+        c.log(`      Project versions: ${state.versionList.length} version ("${state.versionList[state.versionList.length - 1].id}")`);
       } else if (state.versionList.length) {
-        c.log(`    Project Versions: ${state.versionList.length} versions (last was "${state.versionList[state.versionList.length - 1].id}")`);
+        c.log(`      Project versions: ${state.versionList.length} versions (last was "${state.versionList[state.versionList.length - 1].id}")`);
       } else {
-        c.log(`    Project Versions: 0 versions`);
+        c.log(`      Project versions: 0 versions`);
       }
       console.log('');
       console.log(' Options:');
@@ -1252,7 +1293,7 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         }
 
         console.log('');
-        console.log(`Log file at "${logFilePath}" has ${(logStat.size / 1024).toFixed(0)} KB and was last updated at ${logStat.mtime.toISOString()}.`);
+        console.log(`Log file at "${logFilePath}" has ${(logStat.size / 1024).toFixed(0)} KB and was last updated at ${getDateStringConfigAware(logStat.mtime)}.`);
 
         await menu({
           "Print last 50 lines": async () => {
@@ -1279,7 +1320,7 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         }
 
         console.log('');
-        console.log(`Log file at "${logFilePath}" has ${(logStat.size / 1024).toFixed(0)} KB and was last updated at ${logStat.mtime.toISOString()}.`);
+        console.log(`Log file at "${logFilePath}" has ${(logStat.size / 1024).toFixed(0)} KB and was last updated at ${getDateStringConfigAware(logStat.mtime)}.`);
         console.log('');
 
         await menu({
@@ -1498,9 +1539,45 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         return true;
       },
       'Configuration': async () => {
-        console.log('Sorry, this feature is not currently implemented\n');
-        console.log('You may try to edit the config manually\n');
-        console.log(`  Config path: ${path.resolve(projectPath, 'deployment')}`);
+        console.log('Configuration menu options\n');
+        await menu({
+          "Go back": async () => true,
+          "Change date offset (version id and logs)": async () => {
+            if (config.hourOffset) {
+              let hours = (config.hourOffset);
+              console.log(`    Current offset: ${Math.floor(hours).toString().padStart(2, '0')}:${Math.abs(Math.floor(hours % 60)).toString().padStart(2, '0')}`);
+              console.log(``);
+            } else {
+              console.log(`    Current offset: disabled`);
+              console.log(``);
+            }
+            process.stdout.write(` > Input the offset in hours: `);
+            const value = await waitForUserInput();
+            process.stdout.write(`\n`);
+            if (!value || isNaN(parseFloat(value))) {
+              console.log(`Could not understand input`);
+              return;
+            }
+            hours = parseFloat(value) / (60 * 1000);
+            console.log(`    New offset: ${Math.floor(hours).toString().padStart(2, '0')}:${Math.abs(Math.floor(hours % 60)).toString().padStart(2, '0')}`);
+            console.log(``);
+            console.log(`  Time now with offset: ${getDateStringAtOffset(new Date(), hours)}`);
+            console.log(``);
+            if (!await waitForUserConfirmation(' > Confirm new offset?')) {
+              return;
+            }
+            const freshConfig = await getProjectConfig(projectPath, true);
+            const configPath = path.resolve(projectPath, 'deployment', 'config.json');
+            freshConfig.hourOffset = parseFloat(value) / (60 * 1000);
+            await fs.promises.writeFile(configPath, JSON.stringify(freshConfig, null, '  '), 'utf-8');
+            config = freshConfig;
+          },
+          "Anything else": async () => {
+            console.log('Sorry, this feature is not currently implemented\n');
+            console.log('You may try to edit the config manually\n');
+            console.log(`  Config path: ${path.resolve(projectPath, 'deployment', 'config.json')}`);
+          },
+        });
         return true;
       },
       'Finish program': async () => {
@@ -1511,6 +1588,20 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
 }
 
 async function nodeDeploymentSetup() {
+  if (args[0] && args[0].startsWith('--')) {
+    const target = path.resolve(process.cwd(), 'deployment', 'deployment.log');
+    if (fs.existsSync(target)) {
+      c.logFilePath = target
+    } else {
+      const target = path.resolve(process.cwd(), 'deployment.log');
+      if (path.basename(process.cwd()) === 'deployment' && fs.existsSync(target)) {
+        c.logFilePath = target
+      }
+    }
+    c.log('Invalid argument for project directory');
+    process.exit(1);
+  }
+
   let targetPath = args.length === 1 ? path.resolve(args[0]) : '';
 
   // Check if we must change our log file path
@@ -1726,4 +1817,15 @@ function getFormattedHourDifference(date1, date2) {
   const minutes = Math.floor((delta % (1000 * 60 * 60)) / (1000 * 60));
   const seconds = Math.floor((delta % (1000 * 60)) / 1000);
   return `${hours}:${minutes}:${seconds}`;
+}
+
+function getDateStringAtOffset(date = new Date(), offset) {
+  return new Date(date.getTime() + (offset && typeof offset === 'number' && offset >= -24 && offset <= 24 ? offset : 0) * 60 * 60 * 1000).toISOString().replace('T', ' ');
+}
+
+function getDateStringConfigAware(date = new Date()) {
+  if (!global || !global.cachedConfig || !global.cachedConfig.hourOffset) {
+    return date.toISOString();
+  }
+  return getDateStringAtOffset(date, global.cachedConfig.hourOffset);
 }
