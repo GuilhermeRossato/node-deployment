@@ -176,7 +176,7 @@ async function nodeDeploymentManager() {
   let processorChild;
   await startDeploymentProcessor();
 
-  process.on('exit', () => {
+  process.on("exit", () => {
     try {
       if (processorChild && processorChild.kill) {
         processorChild.kill();
@@ -186,7 +186,7 @@ async function nodeDeploymentManager() {
     }
   });
 
-  process.on('beforeExit', () => {
+  process.on("beforeExit", () => {
     try {
       if (processorChild && processorChild.kill) {
         processorChild.kill();
@@ -194,7 +194,7 @@ async function nodeDeploymentManager() {
     } catch (err) {
       // ignore
     }
-  })
+  });
 
   async function startDeploymentProcessor() {
     processorChild = await new Promise((resolve) => {
@@ -340,7 +340,7 @@ async function nodeDeploymentManager() {
         );
       }
       expectInstanceClose = true;
-      killStartDate = new Date().getTime();
+      killStartDate = new Date();
       try {
         instance.kill();
       } catch (err) {
@@ -2230,7 +2230,6 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
               isRunning ? "is running" : "is not running"
             }`
           );
-          console.log("");
         }
 
         const instancePathFilePath = path.resolve(
@@ -2243,7 +2242,7 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         );
         if (instanceFilePath === null || instanceFilePath instanceof Error) {
           console.log(
-            `Could not read instance path from "${instanceFilePath}": ${
+            `Could not read instance path from "${instancePathFilePath}": ${
               instanceFilePath === null
                 ? "it does not exist"
                 : "an error occured"
@@ -2260,7 +2259,7 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         }
 
         let options = {};
-        options["Refresh state"] = async () => {};
+        options["Refresh menu values"] = async () => {};
 
         const lastInstanceVersion = instanceFilePath
           ? path.basename(instanceFilePath)
@@ -2269,23 +2268,42 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
           ? lastInstanceVersion
           : state.versionList[state.versionList.length - 1].id;
 
-        const restartInstance = async () => {
-          const instancePidStat = await asyncTryCatchNull(
-            fs.promises.stat(instancePidPath, "utf-8")
+        const restartInstance = async (targetRepositoryPath) => {
+          let instancePidStat;
+          try {
+            instancePidStat = await asyncTryCatchNull(
+              fs.promises.stat(instancePidPath, "utf-8")
+            );
+          } catch (err) {
+            console.log(`Could not stat "${instancePidPath}"`);
+          }
+          const realTarget = targetRepositoryPath
+            ? targetRepositoryPath
+            : instanceFilePath
+            ? instanceFilePath
+            : state.versionList[state.versionList.length - 1].repositoryPath;
+          console.log(
+            `Sending request to manager to restart at version "${path.basename(
+              realTarget
+            )}"`
           );
-          const response = await fetch(
-            `http://localhost:${config.managerPort}/`,
-            {
+          let response, text;
+          try {
+            response = await fetch(`http://localhost:${config.managerPort}/`, {
               method: "POST",
               body: JSON.stringify({
-                repositoryPath: instanceFilePath
-                  ? instanceFilePath
-                  : state.versionList[state.versionList.length - 1]
-                      .repositoryPath,
+                repositoryPath: realTarget,
               }),
-            }
-          );
-          const text = await response.text();
+            });
+            text = await response.text();
+          } catch (err) {
+            console.log(
+              `Request to restart at version "${path.basename(
+                realTarget
+              )}" failed: ${err.message}`
+            );
+            return;
+          }
           if (text) {
             console.log(`Instance manager response: ${text}`);
           }
@@ -2329,11 +2347,58 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
           console.log(`New instance pid is ${pid}`);
           return true;
         };
+        const selectInstanceAndRestart = async () => {
+          const options = {};
+          options["Refresh menu values"] = async () => {};
+          const versionList = await asyncTryCatchNull(
+            fs.promises.readdir(
+              path.resolve(projectPath, "deployment", "versions")
+            )
+          );
+          if (versionList instanceof Error) {
+            console.log(`Could not list versions: ${versionList.message}`);
+            return true;
+          }
+
+          const currentId = getCurrentVersionId();
+          const currentDate = getDateFromVersionId(currentId, true);
+          for (let i = 0; i < versionList.length; i++) {
+            let offsetString = "";
+
+            if (currentDate && currentId.length === versionList[i].length) {
+              const versionDate = getDateFromVersionId(versionList[i]);
+              if (versionDate) {
+                offsetString = `[${getDateDifferenceString(
+                  currentDate,
+                  versionDate
+                )}]`;
+              }
+            }
+            const key = `Restart at version "${versionList[i]}" ${offsetString}`;
+
+            options[key] = restartInstance.bind(
+              null,
+              path.resolve(
+                projectPath,
+                "deployment",
+                "versions",
+                versionList[i]
+              )
+            );
+          }
+          options["Go back to previous menu"] = async () => true;
+          await menu(options);
+        };
         if (isRunning) {
           options[`Restart instance process at "${targetId}"`] =
-            restartInstance;
+            restartInstance.bind(null, "TODO DEBUG");
+          options["Restart instance process at a different version"] =
+            selectInstanceAndRestart;
         } else {
-          options[`Start instance process at "${targetId}"`] = restartInstance;
+          options[`Start instance process at "${targetId}"`] =
+            restartInstance.bind(null, "TODO DEBUG");
+          options["Start instance process at a different version"] =
+            selectInstanceAndRestart;
         }
         if (isRunning && instancePidText && instancePidText.trim()) {
           options[`Stop instance process at pid ${instancePidText}`] =
@@ -2366,7 +2431,7 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
           };
         }
         options["Go back to previous menu"] = async () => true;
-        console.log("Instance Management Menu Options:\n");
+        console.log("Instance Management Menu Options:");
         await menu(options);
         return true;
       },
@@ -2485,7 +2550,7 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         }
         const options = {
           "Go back": async () => true,
-          Refresh: async () => {},
+          "Refresh menu values": async () => {},
           "Start (or restart) deployment processor process": async () => {
             await stopProcessByName("processor");
             await startProcessByName("processor");
