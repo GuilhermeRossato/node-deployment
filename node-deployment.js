@@ -727,6 +727,14 @@ async function nodeDeploymentProcessor() {
     }
     const isFirstReuse = config.steps[0].id === "reuse";
     const steps = isFirstReuse ? config.steps.slice(1) : config.steps;
+    if (
+      isFirstReuse &&
+      fs.existsSync(path.resolve(repositoryPath, "node_modules"))
+    ) {
+      c.log(
+        `Pipeline "${id}" - Finished Step 0 - Instance folder was initialized from previous`
+      );
+    }
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       if (runningPipelineId !== id) {
@@ -745,7 +753,7 @@ async function nodeDeploymentProcessor() {
         );
         break;
       }
-      c.log(`Pipeline "${id}" - Starting step ${i + 1}: ${step.name}`);
+      c.log(`Pipeline "${id}" - Starting step ${i + 1} - ${step.name}`);
       if (step.id === "purge") {
         const instanceParentDir = path.dirname(repositoryPath);
         const pipelineList = await fs.promises.readdir(instanceParentDir);
