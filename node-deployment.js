@@ -334,8 +334,8 @@ async function nodeDeploymentManager() {
         instance && typeof instance.pid === "number" ? instance.pid : null;
       if (pid !== lastInstancePid) {
         c.log(
-          `Warning: pid from instance is different from last instance pid: ${JSON.stringify(
-            { lastPid: lastInstancePid, newPid: pid }
+          `Warning: pid from instance object is different from last instance pid variable: ${JSON.stringify(
+            { lastInstancePid: lastInstancePid, newInstancePid: pid }
           )}`
         );
       }
@@ -346,11 +346,16 @@ async function nodeDeploymentManager() {
       } catch (err) {
         c.log(`Failed to request previous instance running at ${pid} to exit`);
       }
-      for (let i = 0; i < 80; i++) {
+      for (let i = 0; i < 40; i++) {
+        const delay = (new Date().getTime() - killStartDate.getTime()) / 1000;
         if (!instance) {
+          if (delay >= 5) {
+            c.log(`Instance took ${delay.toFixed(1)} seconds to close`);
+          }
           break;
         }
         await sleep(350);
+        // after waiting 10 times we verify actively if the process is running
         if (i >= 10 && i % 4 === 0 && pid) {
           // verify if pid is still running
           const isRunning = await isProcessRunningByPid(pid);
@@ -359,31 +364,27 @@ async function nodeDeploymentManager() {
           }
           if (!isRunning) {
             c.log(
-              `Warning: Process ${pid} is not running but instance object is truthy`
+              `Warning: Process ${pid} is not running but instance object is not null`
             );
             break;
           }
-          if (i <= 13) {
-            const delay =
-              (new Date().getTime() - killStartDate.getTime()) / 1000;
+          if (i <= 14) {
             c.log(
-              `Previous instance running at ${pid} has not exited after ${delay.toFixed(
+              `Warning: The previous instance is still running at ${pid} and has not exited after ${delay.toFixed(
                 1
-              )} seconds`
+              )} seconds for "${id}"`
             );
-            break;
           }
         }
         const oldId = path.basename(instanceBeingReplaced);
-        if (i === 30 && instanceBeingReplaced) {
-          const delay = (new Date().getTime() - killStartDate.getTime()) / 1000;
+        if (i === 20 && instanceBeingReplaced) {
           c.log(
-            `Previous instance "${oldId}" has not exited after ${delay.toFixed(
+            `Previous instance "${oldId}" still has not exited ${delay.toFixed(
               1
-            )} seconds for "${id}"`
+            )} seconds after kill command so that "${id}" can start`
           );
         }
-        if (i === 33 && instance && typeof instance.pid === "number") {
+        if (i === 22 && instance && typeof instance.pid === "number") {
           try {
             c.log(`Attempting to stop ${instance.pid} with process.kill()`);
             process.kill(instance.pid);
@@ -405,9 +406,36 @@ async function nodeDeploymentManager() {
       }
       if (instance) {
         c.log(
-          `Previous instance did not exit at "${instanceBeingReplaced}" for "${id}" to start`
+          `Previous instance at "${instanceBeingReplaced}" failed to exit for "${id}" to start`
         );
-        return;
+        const ppid = await getProcessParentIdByPid(pid);
+        c.log(
+          `Attempting to kill previous instance from parent pid ${ppid} to start "${id}"`
+        );
+        try {
+          process.kill(ppid);
+        } catch (err) {
+          console.log(
+            "Attempting to kill previous instance parent caused an error: " +
+              err.message
+          );
+        }
+        for (let i = 0; i < 10 * 4; i++) {
+          if (!instance) {
+            break;
+          }
+          await sleep(250);
+        }
+        if (!instance) {
+          console.log(
+            "Previous instance closed after killing the parent process"
+          );
+        } else {
+          console.log(
+            `Previous instance at pid ${pid} did not close after trying to kill the parent process at pid ${ppid}`
+          );
+          return;
+        }
       }
       await sleep(100);
     }
@@ -484,6 +512,9 @@ async function nodeDeploymentManager() {
       cwd: targetInstancePath,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    if (instance && instance.pid) {
+      lastInstancePid = instance.pid;
+    }
     instance.on("error", (err) => {
       c.log(`Instance from "${id}" failed to start: ${err.message}`);
       instance = null;
@@ -1121,16 +1152,25 @@ async function nodeDeploymentPostUpdate() {
         fs.promises.readFile(instanceFilePath, "utf-8")
       );
       if (instancePath && fs.existsSync(instancePath)) {
-        cp.execSync(`cp -rf "${instancePath}" "${repositoryPath}"`, {
+        c.log(
+          `Copying previous instance folder from "${path.basename(
+            instancePath
+          )}"`
+        );
+        const sourceArg = instancePath.endsWith("/")
+          ? instancePath.substring(0, instancePath.length - 1)
+          : instancePath;
+        const targetArg = repositoryPath.endsWith("/")
+          ? repositoryPath.substring(0, repositoryPath.length - 1)
+          : repositoryPath;
+        cp.execSync(`cp -rf "${sourceArg}" "${targetArg}"`, {
           cwd: projectPath,
           stdio: "inherit",
         });
         c.log("Successfully copied instance files to new pipeline folder");
       }
     } catch (err) {
-      c.log(
-        "Failed while copying previous instance folder to new pipeline folder"
-      );
+      c.log("Failed to copy previous instance folder to new pipeline folder");
     }
   }
   try {
@@ -2959,6 +2999,25 @@ async function killProcessByPid(pid, name) {
       1
     )} seconds after attempting to kill it`
   );
+}
+async function getProcessParentIdByPid(pid) {
+  const statusFilePath = "/proc/" + pid + "/status";
+
+  if (!fs.existsSync(statusFilePath)) {
+    return null;
+  }
+
+  const statusContent = fs.readFileSync(statusFilePath, "utf8");
+  const lines = statusContent.toLowerCase().split("\n");
+
+  for (const line of lines) {
+    if (line.startsWith("ppid:")) {
+      const parentPid = parseInt(line.substring(5).trim());
+      return parentPid;
+    }
+  }
+
+  return null;
 }
 
 async function isProcessRunningByPid(pid) {
