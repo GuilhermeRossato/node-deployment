@@ -1160,9 +1160,12 @@ async function nodeDeploymentPostUpdate() {
         const sourceArg = instancePath.endsWith("/")
           ? instancePath.substring(0, instancePath.length - 1)
           : instancePath;
-        const targetArg = repositoryPath.endsWith("/")
+        let targetArg = repositoryPath.endsWith("/")
           ? repositoryPath.substring(0, repositoryPath.length - 1)
           : repositoryPath;
+        if (targetArg.endsWith('/')) {
+          targetArg = targetArg.substring(0, targetArg.length-1)
+        }
         cp.execSync(`cp -rf "${sourceArg}" "${targetArg}"`, {
           cwd: projectPath,
           stdio: "inherit",
