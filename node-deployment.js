@@ -32,21 +32,21 @@ const c = {
   prefix: isScheduler
     ? " [sh]"
     : isProcessor
-    ? " [pro]"
-    : isManager
-    ? " [mana]"
-    : " [s]",
+      ? " [pro]"
+      : isManager
+        ? " [mana]"
+        : " [s]",
   log: (...args) => {
     const prefix = `[${getDateStringConfigAware(new Date())}]${c.prefix} `;
     const parts = args.map((arg) =>
       arg instanceof Error
         ? arg.stack
         : typeof arg === "string"
-        ? arg
+          ? arg
             .split("\n")
             .map((line) => prefix + line)
             .join("\n")
-        : arg.toString()
+          : arg.toString()
     );
     const message = `${parts.join(" ")}\n`;
     if (process.stdout && process.stdout.write) {
@@ -309,6 +309,7 @@ async function nodeDeploymentManager() {
     fs.promises.readFile(instanceFilePath, "utf-8")
   );
   let lastInstancePid = null;
+  /** @type {cp.ChildProcessWithoutNullStreams} */
   let instance;
   let expectInstanceClose = false;
   let restartTimeout;
@@ -334,8 +335,8 @@ async function nodeDeploymentManager() {
         instance && typeof instance.pid === "number" ? instance.pid : null;
       if (pid !== lastInstancePid) {
         c.log(
-          `Warning: pid from instance object is different from last instance pid variable: ${JSON.stringify(
-            { lastInstancePid: lastInstancePid, newInstancePid: pid }
+          `Warning: pid from instance (instance.pid) is different from last instance pid (lastInstancePid): ${JSON.stringify(
+            { lastPid: lastInstancePid, newPid: pid }
           )}`
         );
       }
@@ -344,7 +345,20 @@ async function nodeDeploymentManager() {
       try {
         instance.kill();
       } catch (err) {
-        c.log(`Failed to request previous instance running at ${pid} to exit`);
+        c.log(`Failed to kill previous instance running at ${pid}`);
+        c.log(`Error: ${err.message}`);
+        await sleep(500);
+        if (await isProcessRunningByPid(pid)) {
+          try {
+            const text = cp.execSync(`kill -9 ${pid}`).toString();
+            c.log(`Sent kill command${text && text.length ? ` and got response: ${text}` : 'to previous instance'}`);
+          } catch (err) {
+            c.log(`Failed to execute kill command at previous instance running at ${pid}`);
+            c.log(`Error: ${err.message}`);
+          }
+        } else if (instance) {
+          console.log(`Check for previous instance at ${pid} indicate it is not running but instance variable still remains`);
+        }
       }
       for (let i = 0; i < 40; i++) {
         const delay = (new Date().getTime() - killStartDate.getTime()) / 1000;
@@ -355,52 +369,61 @@ async function nodeDeploymentManager() {
           break;
         }
         await sleep(350);
-        // after waiting 10 times we verify actively if the process is running
-        if (i >= 10 && i % 4 === 0 && pid) {
-          // verify if pid is still running
-          const isRunning = await isProcessRunningByPid(pid);
-          if (!instance) {
-            break;
+        if (delay >= 10) {
+          break;
+        }
+      }
+      if (instance) {
+        c.log(`Instance did not close after ${delay.toFixed(1)} seconds`);
+        for (let i = 0; i < 40; i++) {
+          // after 10 waits and every 1 second verify actively if the process exists
+          if (i >= 10 && i % 4 === 0 && pid) {
+            // verify if pid is still running
+            const isRunning = await isProcessRunningByPid(pid);
+            if (!instance) {
+              break;
+            }
+            if (!isRunning) {
+              c.log(
+                `Warning: Process ${pid} is not running but instance object is not null`
+              );
+              break;
+            }
+            if (i <= 14) {
+              c.log(
+                `The previous instance is still running at ${pid} and has not exited after ${delay.toFixed(
+                  1
+                )} seconds for "${id}"`
+              );
+            }
           }
-          if (!isRunning) {
+          const oldId = path.basename(instanceBeingReplaced);
+          if (i === 20 && instanceBeingReplaced) {
+            const delay = (new Date().getTime() - killStartDate.getTime()) / 1000;
             c.log(
-              `Warning: Process ${pid} is not running but instance object is not null`
-            );
-            break;
-          }
-          if (i <= 14) {
-            c.log(
-              `Warning: The previous instance is still running at ${pid} and has not exited after ${delay.toFixed(
+              `Previous instance "${oldId}" still has not exited ${delay.toFixed(
                 1
-              )} seconds for "${id}"`
+              )} seconds after kill command so that "${id}" can start`
             );
           }
-        }
-        const oldId = path.basename(instanceBeingReplaced);
-        if (i === 20 && instanceBeingReplaced) {
-          c.log(
-            `Previous instance "${oldId}" still has not exited ${delay.toFixed(
-              1
-            )} seconds after kill command so that "${id}" can start`
-          );
-        }
-        if (i === 22 && instance && typeof instance.pid === "number") {
-          try {
-            c.log(`Attempting to stop ${instance.pid} with process.kill()`);
-            process.kill(instance.pid);
-          } catch (err) {
-            c.log(
-              `Could not kill instance "${oldId}" by sending process kill to ${instance.pid}`
-            );
-          }
-        } else if (i === 36 && typeof instance.pid === "number") {
-          try {
-            c.log(`Attempting to stop ${instance.pid} with "kill -9"`);
-            cp.execSync(`kill -9 ${instance.pid}`);
-          } catch (err) {
-            c.log(
-              `Could not kill instance "${oldId}" by running "kill -9" command at ${instance.pid}`
-            );
+          if (i === 22 && instance && typeof instance.pid === "number") {
+            try {
+              c.log(`Attempting to stop ${instance.pid} with process.kill()`);
+              process.kill(instance.pid);
+            } catch (err) {
+              c.log(
+                `Could not kill instance "${oldId}" by sending process kill to ${instance.pid}`
+              );
+            }
+          } else if (i === 36 && typeof instance.pid === "number") {
+            try {
+              c.log(`Attempting to stop ${instance.pid} with "kill -9"`);
+              cp.execSync(`kill -9 ${instance.pid}`);
+            } catch (err) {
+              c.log(
+                `Could not kill instance "${oldId}" by running "kill -9" command at ${instance.pid}`
+              );
+            }
           }
         }
       }
@@ -417,7 +440,7 @@ async function nodeDeploymentManager() {
         } catch (err) {
           console.log(
             "Attempting to kill previous instance parent caused an error: " +
-              err.message
+            err.message
           );
         }
         for (let i = 0; i < 10 * 4; i++) {
@@ -529,11 +552,10 @@ async function nodeDeploymentManager() {
         period < 60
           ? `${period.toFixed(1)} seconds`
           : period / 60 < 60
-          ? `${(period / 60).toFixed(1)} minutes`
-          : `${(period / 60).toFixed(1)} hours`;
+            ? `${(period / 60).toFixed(1)} minutes`
+            : `${(period / 60).toFixed(1)} hours`;
       c.log(
-        `Instance from "${id}" exited ${
-          expectInstanceClose ? "expectedly" : "unexpectedly"
+        `Instance from "${id}" exited ${expectInstanceClose ? "expectedly" : "unexpectedly"
         } with code ${JSON.stringify(code)} after running for ${timeString}`
       );
       if (!expectInstanceClose && period > 30) {
@@ -659,8 +681,7 @@ async function nodeDeploymentManager() {
           const text = await response.text();
           if (!response.ok || (text !== "ok" && text !== '"ok"')) {
             throw new Error(
-              `Unexpected terminate response with status ${
-                response.status
+              `Unexpected terminate response with status ${response.status
               } and body "${text.substring(0, 100)}"`
             );
           }
@@ -674,8 +695,7 @@ async function nodeDeploymentManager() {
       }
       if (k <= httpServerRetryAmount - 1) {
         c.log(
-          `Instance manager failed ${k} out of ${httpServerRetryAmount} times to start server at tcp port ${
-            config.managerPort
+          `Instance manager failed ${k} out of ${httpServerRetryAmount} times to start server at tcp port ${config.managerPort
           }: ${JSON.stringify(err.message)}`
         );
         await sleep(250 + 500 * k);
@@ -770,16 +790,14 @@ async function nodeDeploymentProcessor() {
       const step = steps[i];
       if (runningPipelineId !== id) {
         c.log(
-          `Pipeline "${id}" - Cancelled at step ${
-            i + 1
+          `Pipeline "${id}" - Cancelled at step ${i + 1
           } because running pipeline id changed to "${runningPipelineId}"`
         );
         break;
       }
       if (replacingPipelineId !== null && replacingPipelineId !== undefined) {
         c.log(
-          `Pipeline "${id}" - Cancelled at step ${
-            i + 1
+          `Pipeline "${id}" - Cancelled at step ${i + 1
           } because replacing pipeline id was set to "${replacingPipelineId}"`
         );
         break;
@@ -795,12 +813,11 @@ async function nodeDeploymentProcessor() {
           pipelineList.length <= 15
             ? []
             : pipelineList.length <= 16
-            ? [pipelineList[0]]
-            : [pipelineList[0], pipelineList[1]];
+              ? [pipelineList[0]]
+              : [pipelineList[0], pipelineList[1]];
         if (exceedList.length === 0) {
           c.log(
-            `Pipeline "${id}" - Skipping step ${
-              i + 1
+            `Pipeline "${id}" - Skipping step ${i + 1
             } because there aren\'t enough pipeline folders to trigger deletion`
           );
         } else {
@@ -821,8 +838,7 @@ async function nodeDeploymentProcessor() {
             }
           }
           c.log(
-            `Pipeline "${id}" - Finished step ${i + 1} ${
-              hadError ? "with errors" : ""
+            `Pipeline "${id}" - Finished step ${i + 1} ${hadError ? "with errors" : ""
             }`
           );
         }
@@ -850,8 +866,8 @@ async function nodeDeploymentProcessor() {
           packageLockStat instanceof fs.Stats
             ? null
             : await asyncTryCatchNull(
-                fs.promises.stat(path.resolve(repositoryPath, "yarn.lock"))
-              );
+              fs.promises.stat(path.resolve(repositoryPath, "yarn.lock"))
+            );
         await new Promise((resolve, reject) => {
           let command = step.command.split(" ");
           if (statLockStat instanceof fs.Stats) {
@@ -940,8 +956,7 @@ async function nodeDeploymentProcessor() {
       selfPid.trim() !== process.pid.toString().trim()
     ) {
       c.log(
-        `Fatal error: Deployment processor pid ${
-          process.pid
+        `Fatal error: Deployment processor pid ${process.pid
         } detected unexpected instance pid file contents: ${JSON.stringify(
           selfPid
         )}`
@@ -994,10 +1009,9 @@ async function nodeDeploymentProcessor() {
     const targetInstancePath = data.repositoryPath;
     const id = path.basename(targetInstancePath);
     c.log(
-      `Received pipeline request "${id}" (${
-        runningPipelineId
-          ? `while "${runningPipelineId}" is executing`
-          : "while idle"
+      `Received pipeline request "${id}" (${runningPipelineId
+        ? `while "${runningPipelineId}" is executing`
+        : "while idle"
       })`
     );
 
@@ -1050,8 +1064,7 @@ async function nodeDeploymentProcessor() {
           const text = await response.text();
           if (!response.ok || (text !== "ok" && text !== '"ok"')) {
             throw new Error(
-              `Unexpected terminate response with status ${
-                response.status
+              `Unexpected terminate response with status ${response.status
               } and body "${text.substring(0, 100)}"`
             );
           }
@@ -1065,8 +1078,7 @@ async function nodeDeploymentProcessor() {
       }
       if (k <= httpServerRetryAmount - 1) {
         c.log(
-          `Warning: Deployment processor failed ${k} out of ${httpServerRetryAmount} times to start server at tcp port ${
-            config.processorPort
+          `Warning: Deployment processor failed ${k} out of ${httpServerRetryAmount} times to start server at tcp port ${config.processorPort
           }: ${JSON.stringify(err.message)}`
         );
         await sleep(250 + 500 * k);
@@ -1152,21 +1164,15 @@ async function nodeDeploymentPostUpdate() {
         fs.promises.readFile(instanceFilePath, "utf-8")
       );
       if (instancePath && fs.existsSync(instancePath)) {
-        c.log(
-          `Copying previous instance folder from "${path.basename(
-            instancePath
-          )}"`
-        );
-        const sourceArg = instancePath.endsWith("/")
-          ? instancePath.substring(0, instancePath.length - 1)
-          : instancePath;
-        let targetArg = repositoryPath.endsWith("/")
-          ? repositoryPath.substring(0, repositoryPath.length - 1)
-          : repositoryPath;
-        if (targetArg.endsWith('/')) {
-          targetArg = targetArg.substring(0, targetArg.length-1)
+        c.log(`Copying contents from previous instance folder to new`);
+        const sourceArg = instancePath.endsWith('/') ? instancePath.substring(0, instancePath.length-1) : f;
+        let targetArg = path.dirname(repositoryPath[1]);
+        if (!targetArg.endsWith('/')) {
+          targetArg = targetArg + '/';
         }
-        cp.execSync(`cp -rf "${sourceArg}" "${targetArg}"`, {
+        const copyCommand = `cp -rf "${sourceArg}" "${targetArg}"`;
+        c.log(`Command: ${copyCommand}`);
+        cp.execSync(copyCommand, {
           cwd: projectPath,
           stdio: "inherit",
         });
@@ -1677,8 +1683,7 @@ async function executeNodeDeploymentSetupForProject(projectPath) {
           await sleep(200);
         }
         c.log(
-          `Executing instance manager ${
-            t === 0 ? "in attached mode" : "in detached mode"
+          `Executing instance manager ${t === 0 ? "in attached mode" : "in detached mode"
           } from setup script`
         );
         await sleep(200);
@@ -1929,8 +1934,8 @@ async function getProjectConfigurationMenuState(projectPath, config) {
     versionIdList === null
       ? []
       : versionIdList.map((fileName) =>
-          path.resolve(projectPath, "deployment", "versions", fileName)
-        );
+        path.resolve(projectPath, "deployment", "versions", fileName)
+      );
 
   /** @type {{id: string, repositoryPath: string, isCurrentInstance: boolean, logFilePath: string, logFileSize: null | number}[]} */
   const versionList = await Promise.all(
@@ -2064,39 +2069,32 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         }
       }
       c.log(
-        `    Deployment Manager: ${
-          state.managerRunning ? "running" : "not running"
-        } ${
-          state.managerRunning
-            ? `at pid ${state.managerPid}`
-            : state.managerPid
+        `    Deployment Manager: ${state.managerRunning ? "running" : "not running"
+        } ${state.managerRunning
+          ? `at pid ${state.managerPid}`
+          : state.managerPid
             ? `last pid was ${state.managerPid}`
             : "no pid info"
         }`
       );
       c.log(
-        `  Deployment Processor: ${
-          state.processorRunning ? "running" : "not running"
-        } ${
-          state.processorRunning
-            ? `at pid ${state.processorPid}`
-            : state.processorPid
+        `  Deployment Processor: ${state.processorRunning ? "running" : "not running"
+        } ${state.processorRunning
+          ? `at pid ${state.processorPid}`
+          : state.processorPid
             ? `last pid was ${state.processorPid}`
             : "no pid info"
         }`
       );
       if (state.versionList.length === 1) {
         c.log(
-          `      Project versions: ${state.versionList.length} version ("${
-            state.versionList[state.versionList.length - 1].id
+          `      Project versions: ${state.versionList.length} version ("${state.versionList[state.versionList.length - 1].id
           }")`
         );
       } else if (state.versionList.length) {
         c.log(
-          `      Project versions: ${
-            state.versionList.length
-          } versions (last was "${
-            state.versionList[state.versionList.length - 1].id
+          `      Project versions: ${state.versionList.length
+          } versions (last was "${state.versionList[state.versionList.length - 1].id
           }")`
         );
       } else {
@@ -2265,20 +2263,17 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         let isRunning = false;
         if (instancePidText === null || instancePidText instanceof Error) {
           console.log(
-            `Could not read instance pid at "${instancePidPath}": ${
-              instancePidText === null
-                ? "it does not exist"
-                : "an error occured"
+            `Could not read instance pid at "${instancePidPath}": ${instancePidText === null
+              ? "it does not exist"
+              : "an error occured"
             }`
           );
           console.log("");
         } else {
           isRunning = await isProcessRunningByPid(instancePidText);
           console.log(
-            `The instance pid ${
-              isRunning ? "is" : "was"
-            } ${instancePidText.trim()} and it ${
-              isRunning ? "is running" : "is not running"
+            `The instance pid ${isRunning ? "is" : "was"
+            } ${instancePidText.trim()} and it ${isRunning ? "is running" : "is not running"
             }`
           );
         }
@@ -2293,10 +2288,9 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         );
         if (instanceFilePath === null || instanceFilePath instanceof Error) {
           console.log(
-            `Could not read instance path from "${instancePathFilePath}": ${
-              instanceFilePath === null
-                ? "it does not exist"
-                : "an error occured"
+            `Could not read instance path from "${instancePathFilePath}": ${instanceFilePath === null
+              ? "it does not exist"
+              : "an error occured"
             }`
           );
           console.log("");
@@ -2310,7 +2304,7 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         }
 
         let options = {};
-        options["Refresh menu values"] = async () => {};
+        options["Refresh menu values"] = async () => { };
 
         const lastInstanceVersion = instanceFilePath
           ? path.basename(instanceFilePath)
@@ -2331,8 +2325,8 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
           const realTarget = targetRepositoryPath
             ? targetRepositoryPath
             : instanceFilePath
-            ? instanceFilePath
-            : state.versionList[state.versionList.length - 1].repositoryPath;
+              ? instanceFilePath
+              : state.versionList[state.versionList.length - 1].repositoryPath;
           console.log(
             `Sending request to manager to restart at version "${path.basename(
               realTarget
@@ -2400,7 +2394,7 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         };
         const selectInstanceAndRestart = async () => {
           const options = {};
-          options["Refresh menu values"] = async () => {};
+          options["Refresh menu values"] = async () => { };
           const versionList = await asyncTryCatchNull(
             fs.promises.readdir(
               path.resolve(projectPath, "deployment", "versions")
@@ -2601,7 +2595,7 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
         }
         const options = {
           "Go back": async () => true,
-          "Refresh menu values": async () => {},
+          "Refresh menu values": async () => { },
           "Start (or restart) deployment processor process": async () => {
             await stopProcessByName("processor");
             await startProcessByName("processor");
@@ -2631,8 +2625,8 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
                 `    Current offset: ${Math.floor(hours)
                   .toString()
                   .padStart(2, "0")}:${Math.abs(Math.floor(hours % 60))
-                  .toString()
-                  .padStart(2, "0")}`
+                    .toString()
+                    .padStart(2, "0")}`
               );
               console.log(``);
             } else {
@@ -2651,8 +2645,8 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
               `    New offset: ${Math.floor(hours)
                 .toString()
                 .padStart(2, "0")}:${Math.abs(Math.floor(hours % 60))
-                .toString()
-                .padStart(2, "0")}`
+                  .toString()
+                  .padStart(2, "0")}`
             );
             console.log(``);
             console.log(
@@ -2739,8 +2733,7 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
           obj[key] = (async (id, offsetString) => {
             console.log("");
             console.log(
-              `Selected instance version "${id}" (${
-                offsetString ? `${offsetString}` : "unknown creation date"
+              `Selected instance version "${id}" (${offsetString ? `${offsetString}` : "unknown creation date"
               })`
             );
             console.log("");
@@ -2765,9 +2758,9 @@ async function nodeDeploymentProjectConfig(projectPath, config, saveConfig) {
                   stat === null
                     ? "not created (file does not exist)"
                     : `could not be read at "${path.resolve(
-                        instancePath,
-                        "instance.log"
-                      )}"`
+                      instancePath,
+                      "instance.log"
+                    )}"`
                 );
               } else {
                 process.stdout.write(
@@ -3033,7 +3026,7 @@ async function isProcessRunningByPid(pid) {
     } catch (err) {
       noCount++;
     }
-    await sleep(500);
+    await sleep(100);
   }
   return yesCount > noCount;
 }
@@ -3161,12 +3154,12 @@ function getFormattedHourDifference(date1, date2) {
 function getDateStringAtOffset(date = new Date(), offset) {
   return new Date(
     date.getTime() +
-      (offset && typeof offset === "number" && offset >= -24 && offset <= 24
-        ? offset
-        : 0) *
-        60 *
-        60 *
-        1000
+    (offset && typeof offset === "number" && offset >= -24 && offset <= 24
+      ? offset
+      : 0) *
+    60 *
+    60 *
+    1000
   )
     .toISOString()
     .replace("T", " ");
@@ -3233,9 +3226,8 @@ function getDateDifferenceString(futureDate, pastDate) {
     if (leftOverMinutes === 0) {
       return `${hours} hours ago`;
     }
-    return `${hours} hours and ${
-      leftOverMinutes === 1 ? "1 minute" : `${leftOverMinutes} minutes`
-    } ago`;
+    return `${hours} hours and ${leftOverMinutes === 1 ? "1 minute" : `${leftOverMinutes} minutes`
+      } ago`;
   }
   const days = Math.floor(hours / 24);
   const leftOverHours = hours % 24;
@@ -3244,6 +3236,6 @@ function getDateDifferenceString(futureDate, pastDate) {
       ? `1 day ago`
       : `${days} days ago`
     : leftOverHours == 1
-    ? `${days} ${days === 1 ? "day" : "days"} and 1 hour ago`
-    : `${days} ${days === 1 ? "day" : "days"} and ${leftOverHours} hours ago`;
+      ? `${days} ${days === 1 ? "day" : "days"} and 1 hour ago`
+      : `${days} ${days === 1 ? "day" : "days"} and ${leftOverHours} hours ago`;
 }
