@@ -729,6 +729,75 @@ async function nodeDeploymentManager() {
   }
 }
 
+/**
+ * @returns {Promise<{startTime: number, spawnTime: number | null, exitTime: number | null, duration: number, output?: string, exitCode: null | number}>}
+ */
+function executeShellCommandPredictably(cmd, cwd, timeoutMs = 0, handleOutput) {
+  return new Promise((resolve) => {
+    const response = {
+      startTime: new Date().getTime(),
+      spawnTime: null,
+      exitTime: null,
+      duration: 0,
+      output: handleOutput ? undefined : '',
+      exitCode: null,
+      success: false,
+    };
+
+    const chunks = [];
+    const child = cp.spawn(cmd, { cwd, stdio: 'pipe', shell: true });
+
+    const timeoutTimer = !timeoutMs || timeoutMs <= 0 ? null : setTimeout(() => {
+      if (response.spawnTime || response.output || response.exitCode !== null) {
+        return;
+      }
+      let msg = `Error: Command timeout triggered after ${new Date().getTime() - response.startTime} ms`;
+      try {
+        if (child && typeof child.pid === 'number' && !child.killed) {
+          child.kill();
+        }
+      } catch (err) {
+        msg = `${msg} and killing of child process id ${child.pid} failed with ${err.message}`;
+      }
+      if (handleOutput) {
+        handleOutput(msg);
+      } else {
+        response.output = msg;
+      }
+      response.success = false;
+      resolve(response);
+    }, timeoutMs);
+    child.on('spawn', () => {
+      response.spawnTime = new Date().getTime();
+    });
+    child.on('error', (err) => {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = null;
+      }
+      response.output = err.message;
+      response.success = false;
+      resolve(response);
+    });
+    child.on('exit', (code) => {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = null;
+      }
+      response.exitTime = new Date().getTime();
+      response.duration = response.exitTime - response.startTime;
+      response.exitCode = code;
+      if (!handleOutput) {
+        response.output = Buffer.concat(chunks).toString('utf-8').trim();
+      }
+      response.success = code === 0;
+      resolve(response);
+    });
+    child.stdout.on('data', (data) => handleOutput ? handleOutput(data.toString('utf-8')) : chunks.push(data));
+    child.stderr.on('data', (data) => handleOutput ? handleOutput(data.toString('utf-8')) : chunks.push(data));
+  });
+}
+
 async function nodeDeploymentProcessor() {
   if (!args[1]) {
     c.log("Node Deployment Processor does not have a project path as argument");
@@ -805,42 +874,45 @@ async function nodeDeploymentProcessor() {
       c.log(`Pipeline "${id}" - Starting step ${i + 1} - ${step.name}`);
       if (step.id === "purge") {
         const instanceParentDir = path.dirname(repositoryPath);
-        const pipelineList = await fs.promises.readdir(instanceParentDir);
-        c.log(
-          `Purge step found ${pipelineList.length} pipeline folders at "${instanceParentDir}"`
-        );
-        const exceedList =
-          pipelineList.length <= 15
-            ? []
-            : pipelineList.length <= 16
-              ? [pipelineList[0]]
-              : [pipelineList[0], pipelineList[1]];
-        if (exceedList.length === 0) {
+        const fileList = await fs.promises.readdir(instanceParentDir);
+        const purgeTreshold = typeof step.previousInstanceFolderLimit === 'number' && !isNaN(step.previousInstanceFolderLimit) ? step.previousInstanceFolderLimit : 15;
+        const pipelineList = fileList.filter(a => a.startsWith('2') && a !== path.basename(repositoryPath)).sort();
+        let skipReason = '';
+        const amountOfInstanceFolders = pipelineList.length + 1;
+        if (amountOfInstanceFolders <= 1) {
+          skipReason = 'there are no previous instance folders';
+        } else if (amountOfInstanceFolders === purgeTreshold) {
+          skipReason = `the amount of instance folders (${amountOfInstanceFolders}) matches the number of allowed`;
+        } else if (amountOfInstanceFolders < purgeTreshold) {
+          skipReason = `the amount of instance folders (${amountOfInstanceFolders}) is less than the number of allowed (${purgeTreshold})`;
+        }
+        if (skipReason) {
           c.log(
-            `Pipeline "${id}" - Skipping step ${i + 1
-            } because there aren\'t enough pipeline folders to trigger deletion`
+            `Purge step skipped because ${skipReason} at "${instanceParentDir}"`
           );
         } else {
+          const exceedingList = pipelineList.slice(0, pipelineList.length - purgeTreshold);
+          c.log(`Purge step found ${exceedingList.length === 0 ? 'no instance folder' : exceedingList.length === 1 ? 'a instance folder' : exceedingList.length + ' instance folders'} exceeding the limit amount of ${purgeTreshold} (total is ${amountOfInstanceFolders})`);
+
           let hadError = false;
-          for (let j = 0; j < exceedList.length; j++) {
-            const pipelinePath = path.resolve(instanceParentDir, exceedList[i]);
-            try {
-              c.log(`Removing old pipeline folder at "${pipelinePath}"`);
-              cp.execSync(`rm -rf "${pipelinePath}"`, {
-                cwd: repositoryPath,
-                stdio: "inherit",
-              });
-            } catch (err) {
+          for (let i = 0; i < exceedingList.length; i++) {
+            if (i >= 2) {
+              c.log(`Purge step will leave ${exceedingList.length - i} instance folders to be removed later because of the unexpected amount of instance folders to be removed (${exceedList.length} instead of 1)`);
+              break;
+            }
+            const instanceFolderName = exceedingList[i];
+            const pastInstancePath = path.resolve(instanceParentDir, instanceFolderName);
+            const hasInstanceLog = fs.existsSync(path.resolve(pastInstancePath, "instance.log"));
+            c.log(`Removing past instance folder "${instanceFolderName}" that ${hasInstanceLog ? "contains" : "does not have"} an execution log file ("instance.log")`);
+
+            const { duration, exitCode, output, success } = await executeShellCommandPredictably(`rm -rf "${pastInstancePath}"`, instanceParentDir, 10_000);
+            if (!success) {
               hadError = true;
-              c.log(
-                `Failed at removing old pipeline folder of "${exceedList[i]}": ${err.message}`
-              );
+              c.log(`Failed to remove old pipeline folder "${exceedList[i]}" with exit code ${JSON.stringify(exitCode)} after ${JSON.stringify(duration)} ms`);
+              c.log(`Remove command output: ${output}`);
             }
           }
-          c.log(
-            `Pipeline "${id}" - Finished step ${i + 1} ${hadError ? "with errors" : ""
-            }`
-          );
+          c.log(`Pipeline "${id}" - Finished step ${i + 1} ${hadError ? "with errors" : ""}`);
         }
       } else if (step.id === "restart") {
         const response = await fetch(
@@ -859,78 +931,69 @@ async function nodeDeploymentProcessor() {
         }
         c.log(`Pipeline "${id}" - Finished step ${i + 1}`);
       } else if (step.id === "install") {
-        const packageLockStat = await asyncTryCatchNull(
-          fs.promises.stat(path.resolve(repositoryPath, "package-lock.json"))
-        );
-        const statLockStat =
-          packageLockStat instanceof fs.Stats
-            ? null
-            : await asyncTryCatchNull(
-              fs.promises.stat(path.resolve(repositoryPath, "yarn.lock"))
-            );
-        await new Promise((resolve, reject) => {
-          let command = step.command.split(" ");
-          if (statLockStat instanceof fs.Stats) {
-            command = ["yarn"];
-          } else if (command[1] === "ci" && !packageLockStat) {
-            command[1] = "install";
-          }
+        const repoFileList = await fs.promises.readdir(repositoryPath);
+        const [npmLockExists, yarnLockExists, nodeModulesExists] = ["package-lock.json", "yarn.lock", "node_modules"].map(f => repoFileList.includes(f));
 
-          c.log(`Pipeline "${id}" - Step ${i + 1} - $ ${command.join(" ")}`);
-          const child = cp.spawn(command[0], command.slice(1), {
-            cwd: repositoryPath,
-            stdio: ["inherit", "pipe", "pipe"],
-          });
-          child.stdout.on("data", (text) => {
-            c.log(text.toString().replace(/\r/g, ""));
-          });
-          child.stderr.on("data", (text) => {
-            c.log(text.toString().replace(/\r/g, ""));
-          });
-          child.on("error", reject);
-          child.on("exit", (code) => {
-            if (code === 0) {
-              resolve();
-            } else {
-              reject(
-                new Error(
-                  `Install command failed at "${repositoryPath}" with error code ${code}`
-                )
-              );
-            }
-          });
-        });
+        let command = step.command.split(" ");
+        if (step.command.startsWith("npm ")) {
+          if (npmLockExists === null && yarnLockExists instanceof fs.Stats) {
+            command = ["yarn"];
+          } else if (npmLockExists instanceof fs.Stats && command[1] === "ci") {
+            command = ["npm", "install"];
+          }
+        }
+        if (nodeModulesExists) {
+          const moduleList = await fs.promises.readdir(path.resolve(repositoryPath, "node_modules"));
+          c.log(`Pipeline "${id}" - Step ${i + 1} - Updating dependency folder "node_modules" (${moduleList.filter(a => a !== ".bin" && a !== ".package-lock.json").length} modules inside it) with command:`);
+        } else {
+          c.log(`Pipeline "${id}" - Step ${i + 1} - Creating dependency folder "node_modules" with command:`);
+        }
+        c.log(`Pipeline "${id}" - Step ${i + 1} - $ ${command.join(" ")}`);
+        const { duration, exitCode, success } = await executeShellCommandPredictably(
+          command.join(' '),
+          repositoryPath,
+          180_000,
+          (text) => c.log(text.toString().replace(/\r/g, ""))
+        );
+        if (!success) {
+          hadError = true;
+          throw new Error(`Install command failed at "${repositoryPath}" with error code ${code} after ${JSON.stringify(duration)} ms (exit code is ${JSON.stringify(exitCode)})`);
+        }
+        const moduleList = await asyncTryCatchNull(fs.promises.readdir(path.resolve(repositoryPath, "node_modules")));
+        if (moduleList instanceof Array) {
+          c.log(`Pipeline "${id}" - Dependency folder ${nodeModulesExists ? "" : "created with"} contains ${moduleList.filter(a => a !== ".bin" && a !== ".package-lock.json").length} modules inside after install`);
+        }
         c.log(`Pipeline ${id} - Finished step ${i + 1} without errors`);
       } else if (step.id === "script") {
-        await new Promise((resolve, reject) => {
-          const command = step.command.split(" ");
-          c.log(`Pipeline "${id}" - Step ${i + 1} - $ ${command.join(" ")}`);
-          const child = cp.spawn(command[0], command.slice(1), {
-            cwd: repositoryPath,
-            stdio: ["inherit", "pipe", "pipe"],
-          });
-          child.stdout.on("data", (text) => {
-            c.log(text.toString().replace(/\r/g, ""));
-          });
-          child.stderr.on("data", (text) => {
-            c.log(text.toString().replace(/\r/g, ""));
-          });
-          child.on("error", reject);
-          child.on("exit", (code) => {
-            if (code === 0) {
-              resolve();
-            } else {
-              reject(
-                new Error(
-                  `Command "${command.join(
-                    " "
-                  )}" exited with error code ${code}`
-                )
-              );
+        const isBuildScript = step.command.startsWith("npm build") || step.command.startsWith("npm run build");
+        let skipReason = '';
+        if (isBuildScript) {
+          const repoFileList = await fs.promises.readdir(repositoryPath);
+          if (!repoFileList.includes("package.json")) {
+            skipReason = 'the "package.json" file does not exist';
+          }
+          if (!skipReason) {
+            const pkgText = await fs.promises.readFile(path.resolve(repositoryPath, "package.json"), 'utf-8');
+            if (!pkgText.includes('"build":') && !pkgText.includes('"build" :')) {
+              skipReason = 'the "build" command does not exist in "package.json"';
             }
-          });
-        });
-        c.log(`Pipeline "${id}" - Finished step ${i + 1}`);
+          }
+        }
+        if (skipReason) {
+          c.log(`Pipeline "${id}" - Step ${i + 1} - Skipped because ${skipReason}`);
+        } else {
+          c.log(`Pipeline "${id}" - Step ${i + 1} - $ ${step.command}`);
+          const { duration, exitCode, success } = await executeShellCommandPredictably(
+            step.command,
+            repositoryPath,
+            180_000,
+            (text) => c.log(text.toString().replace(/\r/g, ""))
+          );
+          if (!success) {
+            throw new Error(`Command "${step.command}" failed with code ${JSON.stringify(exitCode)} after ${JSON.stringify(duration)} ms`);
+          }
+          c.log(`Pipeline "${id}" - Finished step ${i + 1} after executing for ${JSON.stringify(duration)} ms`);
+        };
       } else {
         throw new Error(
           `Unknown pipeline step id "${step.id}" at index ${i} of "${projectPath}"`
@@ -1165,7 +1228,7 @@ async function nodeDeploymentPostUpdate() {
       );
       if (instancePath && fs.existsSync(instancePath)) {
         c.log(`Copying contents from previous instance folder to new`);
-        const sourceArg = instancePath.endsWith('/') ? instancePath.substring(0, instancePath.length-1) : f;
+        const sourceArg = instancePath.endsWith('/') ? instancePath.substring(0, instancePath.length - 1) : f;
         let targetArg = path.dirname(repositoryPath[1]);
         if (!targetArg.endsWith('/')) {
           targetArg = targetArg + '/';
@@ -2850,17 +2913,17 @@ async function nodeDeploymentSetup() {
     }
   }
 
-  c.log("");
-  c.log("Node deployment script");
-  c.log("");
-  c.log(`   process id: ${process.pid}`);
-  c.log(`    parent id: ${process.ppid}`);
-  c.log(` current path: ${process.cwd()}`);
-  c.log(`    logs file: ${c.logFilePath}`);
+  console.log("");
+  console.log("Node deployment script");
+  console.log("");
+  console.log(`   process id: ${process.pid}`);
+  console.log(`    parent id: ${process.ppid}`);
+  console.log(` current path: ${process.cwd()}`);
+  console.log(`    logs file: ${c.logFilePath}`);
   if (targetPath) {
-    c.log(` project path: ${targetPath}`);
+    console.log(` project path: ${targetPath}`);
   }
-  c.log("");
+  console.log("");
 
   startUserInput();
 
@@ -2927,7 +2990,7 @@ async function nodeDeploymentSetup() {
       }
       targetPath = resPath;
     }
-    c.log("");
+    console.log("");
     for (let m = 0; m < 1000; m++) {
       if (m !== 0) {
         c.log(``);
@@ -3226,8 +3289,8 @@ function getDateDifferenceString(futureDate, pastDate) {
     if (leftOverMinutes === 0) {
       return `${hours} hours ago`;
     }
-    return `${hours} hours and ${leftOverMinutes === 1 ? "1 minute" : `${leftOverMinutes} minutes`
-      } ago`;
+    const minuteText = `${leftOverMinutes === 1 ? "1 minute" : `${leftOverMinutes} minutes`} ago`;
+    return `${hours} hours and ${minuteText}`;
   }
   const days = Math.floor(hours / 24);
   const leftOverHours = hours % 24;
