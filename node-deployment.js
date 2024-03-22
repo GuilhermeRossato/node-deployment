@@ -72,9 +72,9 @@ const c = {
 if (isSetup) {
   executeProgramAs(nodeDeploymentSetup, "Setup");
 } else if (isManager) {
-  executeProgramAs(nodeDeploymentManager, "Instance Manager");
+  executeProgramAs(nodeDeploymentInstanceManager, "Instance Manager");
 } else if (isProcessor) {
-  executeProgramAs(nodeDeploymentProcessor, "Deployment Processor");
+  executeProgramAs(nodeDeploymentDeploymentProcessor, "Deployment Processor");
 } else if (isScheduler) {
   executeProgramAs(nodeDeploymentPostUpdate, "Post Update");
 } else {
@@ -90,29 +90,22 @@ if (isSetup) {
   process.exit(1);
 }
 
-async function nodeDeploymentManager() {
-  if (!args[1]) {
-    c.log(
-      "Node Deployment Process Manager does not have a project path as argument"
-    );
-    throw new Error("Missing project target path");
-  }
-  if (args[1] !== process.cwd()) {
-    c.log(`Node Deployment Process Manager target project mismatch`);
-    c.log(`Manager started at "${process.cwd()}"`);
-    c.log(` First argument is "${args[1]}"`);
-    throw new Error("Unmatching project target path");
+async function nodeDeploymentInstanceManager() {
+  if (!args[1] || args[1] !== process.cwd()) {
+    c.log(`Argument project path ${!args[1] ? "missing" : "mismatch"}`);
+    c.log(` First argument: "${JSON.stringify(args[1])}"`);
+    c.log(`    Manager cwd: "${process.cwd()}"`);
+    throw new Error(`${!args[1] ? "Missing" : "Unmatching"} project target path argument`);
   }
   const projectPath = path.resolve(args[1]);
+  const deploymentFolderPath = path.resolve(projectPath, "deployment");
   const deploymentStat = await asyncTryCatchNull(
-    fs.promises.stat(path.resolve(projectPath, "deployment"))
+    fs.promises.stat(deploymentFolderPath)
   );
-  if (deploymentStat === null) {
-    throw new Error(
-      `Could not find project deployment folder for "${projectPath}"`
-    );
+  if (!(deploymentStat instanceof fs.Stats)) {
+    throw new Error(`Could not find project deployment folder at "${deploymentFolderPath}"`);
   }
-  c.logFilePath = path.resolve(projectPath, "deployment", "deployment.log");
+  c.logFilePath = path.resolve(deploymentFolderPath, "deployment.log");
   const config = await getProjectConfig(projectPath);
   if (!config) {
     throw new Error(
@@ -124,179 +117,221 @@ async function nodeDeploymentManager() {
   }
   if (!config.managerPort) {
     throw new Error(
-      "Setup incomplete: Missing instance manager port on config"
+      "Setup not concluded or config is incomplete: The \"managerPort\" is missing"
     );
   }
-  c.log(`Instance manager started for "${projectPath}" at pid ${process.pid}`);
+  c.log(`Node Deployment Manager started at pid ${process.pid} from parent pid ${process.ppid} for "${path.dirname(projectPath)}"`);
   c.log("");
 
-  // verify if there is a instance manager running
-  {
-    const pidFilePath = path.resolve(projectPath, "deployment", "manager.pid");
-    const pidText = await asyncTryCatchNull(
-      fs.promises.readFile(pidFilePath, "utf-8")
-    );
-    if (pidText && typeof pidText === "string") {
-      if (await isProcessRunningByPid(parseInt(pidText.trim()))) {
-        c.log(
-          `Instance manager started and a deployment processor is already running at pid ${pidText.trim()}`
-        );
-        c.log(
-          `Attempting to stop outdated deployment processor with pid ${pidText.trim()}`
-        );
-        process.kill(parseInt(pidText.trim()));
-        let success = false;
-        for (let i = 0; i < 10; i++) {
-          await sleep(i === 0 ? 100 : 200);
-          if (!(await isProcessRunningByPid(parseInt(pidText.trim())))) {
-            success = true;
-            break;
-          }
+  // Request status of running node deployment processes
+  const portRecord = {"deployment processor": config.processorPort, "instance manager": config.managerPort};
+  for (const name in portRecord) {
+    const client = getServerClient(name, portRecord[name]);
+    const response = await asyncTryCatchNull(client.requestStatus());
+    if (!(response instanceof Error) && typeof response === 'object' && typeof response.pid === 'number') {
+      c.log(`The ${name} server is running at pid ${response.pid} from parent process ${response.ppid} since ${new Date(response.startTime).toISOString()} (${getDateDifferenceString(new Date(), new Date(response.startTime))})`);
+    } else if (response instanceof Error) {
+      c.log(`The status request to the ${name} server raised an error: ${response.message}`);
+    } else {
+      c.log(`Unexpected response to the status request to the ${name} server: ${JSON.stringify(response)}`);
+    }
+  }
+  // Request termination of running node deployment processes
+  for (const name in portRecord) {
+    const client = getServerClient(name, portRecord[name]);
+    const response = await asyncTryCatchNull(client.requestTermination());
+    if (response instanceof Error) {
+      c.log(`The termination request to the ${name} server raised an error: ${response.message}`);
+    } else {
+      c.log(`Response from the termination request of the ${name} server: ${JSON.stringify(response)}`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+
+  function getServerClient(name, port) {
+    const send = async (url = '/', data = undefined) => {
+      try {
+        if (!port || typeof port !== 'number' || isNaN(port)) {
+          throw new Error(`Invalid target port: ${JSON.stringify(port)}`);
         }
-        if (success) {
-          c.log(
-            `Successfully stopped outdated deployment processor with pid ${pidText.trim()}`
-          );
-        } else {
-          c.log(
-            "Instance manager could not stop outdated deployment processor"
-          );
-          c.log(
-            "This may stop the new deployment processor server from starting"
-          );
-          await sleep(1000);
+        let response;
+        const method = data ? "POST" : "GET";
+        try {
+          response = await fetch(`http://localhost:${port}${url}`, {
+            method: method,
+            body: typeof data === 'object' ? JSON.stringify(data) : data
+          });
+        } catch (err) {
+          err.message = `Fetch to "http://localhost:${port}${url}" failed ${err.code ? `with code ${JSON.stringify(err.code)} and` : `with`} message: ${JSON.stringify(err.message)}`;
+          throw err;
         }
+        if (response.status === 404) {
+          throw new Error(`Request to "${url}" was responded with status code ${response.status}: url not found`);
+        }
+        let text = await response.text();
+        if (response.status === 500) {
+          throw new Error(`Request to "${url}" was responded with status code ${response.status} and body "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
+        }
+        if (text.length === 0) {
+          throw new Error(`Request to "${url}" was responded with empty body`);
+        }
+        if (url.startsWith("/api/") && url[0] !== '{') {
+          throw new Error(`Request to "${url}" was responded with body that starts with ${JSON.stringify(url[0])} character instead of "{"`);
+        }
+        return url.startsWith("/api/") ? JSON.parse(text) : text;
+      } catch (err) {
+        err.message = `Request to ${name} server at port ${port} failed: ${err.message}`;
+        throw err;
       }
+    }
+    return {
+      requestStatus: send.bind(null, '/api/status/'),
+      requestTermination: send.bind(null, '/api/terminate/', {sourcePid: process.pid, sourceCwd: process.cwd()}),
+      send,
     }
   }
 
-  c.log("Instance manager is starting deployment processor in attached mode");
+  c.log("Instance manager will start the deployment processor");
 
-  let processorRestartCount = 0;
-  let processorChild;
-  await startDeploymentProcessor();
-
-  process.on("exit", () => {
-    try {
-      if (processorChild && processorChild.kill) {
-        processorChild.kill();
-      }
-    } catch (err) {
-      // ignore
-    }
+  startDeploymentProcessorHandlerLoop().catch((err) => {
+    c.log('Deployment processor handler failed:');
+    c.log(err.stack);
   });
 
-  process.on("beforeExit", () => {
-    try {
-      if (processorChild && processorChild.kill) {
-        processorChild.kill();
-      }
-    } catch (err) {
-      // ignore
-    }
-  });
+  async function startDeploymentProcessorHandlerLoop() {
+    let lastExecTime = 0;
+    let startCount = 0;
+    let messageCount = 0;
+    let processor;
 
-  async function startDeploymentProcessor() {
-    processorChild = await new Promise((resolve) => {
+    const onParentExit = () => {
       try {
-        const timer = setTimeout(() => {
-          c.log(`Deployment processor failed to start due to spawn timeout`);
-          resolve(
-            new Error("Timeout exceeded while starting deployment processor")
-          );
-        }, 3000);
-        const command = [
-          process.argv[0],
-          "./deployment/node-deployment.js",
-          "--processor",
-          projectPath,
-        ];
-        const processor = cp.spawn(command[0], command.slice(1), {
-          cwd: projectPath,
-          env: process.env,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        processor.stderr.on("data", (data) => {
-          const text = data.toString();
-          if (processorRestartCount > -7 && text.trim().length) {
-            console.log(
-              `Deployment processor sent data to instance manager on stderr:\n${text}`
-            );
-          }
-        });
-        processor.stdout.on("data", (data) => {
-          const text = data.toString();
-          if (processorRestartCount > -7 && text.trim().length) {
-            console.log(
-              `Deployment processor sent data to instance manager:\n${text}`
-            );
-          }
-        });
-        let hasExited = false;
-        let processorStartTime = null;
-        processor.on("spawn", () => {
-          processorStartTime = new Date();
-          clearTimeout(timer);
-          c.log(
-            `Instance manager started deployment processor at pid ${processor.pid}`
-          );
-          // delay resolve to make sure it doesn't exit right away
-          setTimeout(() => {
-            if (!hasExited) {
-              resolve(processor);
-            }
-          }, 2000);
-        });
-        processor.on("error", (err) => {
-          hasExited = true;
-          clearTimeout(timer);
-          c.log(
-            `Deployment processor failed to start due to error: ${err.message}`
-          );
-          resolve(err);
-        });
-        processor.on("exit", (code) => {
-          hasExited = true;
-          c.log(`Deployment processor exited with code ${code}`);
-          if (processorRestartCount === 0) {
-            processorRestartCount++;
-            c.log(
-              `Attempting to restart deployment processor for the first time`
-            );
-            setTimeout(() => {
-              startDeploymentProcessor();
-            }, 1000);
-          } else if (processorRestartCount === 1) {
-            processorRestartCount++;
-            c.log(
-              `Attempting to restart deployment processor for the second time`
-            );
-            setTimeout(() => {
-              startDeploymentProcessor();
-            }, 5000);
-          } else {
-            processorRestartCount++;
-            let delay = 30;
-            // if processor has been executing for longer than 30 seconds we can speed up the restart time
-            if (
-              processorStartTime &&
-              new Date().getTime() - processorStartTime.getTime() >= 30_000
-            ) {
-              delay = 2;
-            }
-            c.log(
-              `Attempting to restart deployment processor for the ${processorRestartCount} time in ${delay} seconds...`
-            );
-            setTimeout(() => {
-              c.log(`Attempting to start deployment processor after it exited`);
-              startDeploymentProcessor();
-            }, delay * 1_000);
-          }
-        });
+        if (processor && processor.kill instanceof Function && typeof processor.pid === "number") {
+          processorChild.kill();
+        }
       } catch (err) {
-        c.log(`Error while starting deployment processor: ${err.message}`);
-        resolve();
+        // ignore
       }
+    };
+
+    process.on("exit", onParentExit);
+    process.on("beforeExit", onParentExit);
+
+    while (true) {
+      if (startCount > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      startCount++;
+      lastExecTime = new Date().getTime();
+      messageCount = 0;
+      await new Promise(resolve => {
+        executeDeploymentProcessorChild(
+          (child) => {
+            processor = child;
+            c.log(`Deployment processor started with pid ${processor.pid}`);
+          },
+          (message) => {
+            c.log(message);
+            resolve();
+          },
+          (message) => {
+            if ((message.length === 0 && messageCount === 0) || (messageCount >= (startCount === 1 ? 5 : 3))) {
+              return;
+            }
+            if (messageCount === 0) {
+              c.log('First deployment processor child output:');
+              c.log(message);
+            } else {
+              c.log(`Child output #${messageCount}: ${message}`);
+            }
+            if (message.length) {
+              messageCount++;
+            }
+          }
+        );
+      });
+      const timeSinceLastExecTime = new Date().getTime() - lastExecTime;
+      const timeToWait = startCount === 1 ? 2000 : timeSinceLastExecTime < 15_000 ? 15_000 : 30_000;
+      c.log(`Waiting ${timeToWait} ms to restart deployment processor`);
+      await new Promise((resolve) => setTimeout(resolve, timeToWait));
+    }
+  }
+    
+  /**
+   * Executes the deployment processor child process
+   * @param {(child: cp.ChildProcessByStdio) => any} onProcessStart 
+   * @param {(state: string) => any} onProcessEnd 
+   * @param {(text: string) => any} onProcessOutput 
+   */
+  function executeDeploymentProcessorChild(onProcessStart, onProcessEnd, onProcessOutput) {
+    let hasTimeouted = false;
+    let messageTimeout = setTimeout(() => {
+      messageTimeout = 0;
+      if (hasTimeouted) {
+        return;
+      }
+      hasTimeouted = true;
+      onProcessEnd('Spawn timeout timer triggered');
+    }, 3000);
+
+    let confirmTimer = undefined;
+    let child;
+    let startBuffer = undefined;
+
+    const onMessage = (data) => {
+      if (messageTimeout) {
+        clearTimeout(messageTimeout);
+        messageTimeout = 0;
+      }
+      if (hasTimeouted && child && typeof child.pid === 'number' && !child.killed) {
+        c.log(`A deployment processor considered to have failed by timeout has spawned with pid ${child.pid}`);
+        c.log(`Terminating unexpected process forcefully with "kill -9 ${child.pid}"`);
+        executeCommandPredictably(`kill -9 ${child.pid}`, process.cwd(), 10_000).then((response) => {
+          if (!response.success) {
+            c.log(`Failed to kill unexpected child process: ${JSON.stringify(response)}`);
+          }
+        });
+        child = null;
+      }
+      if (hasTimeouted) {
+        return;
+      }
+      if (confirmTimer === undefined) {
+        startBuffer = [];
+        confirmTimer = setTimeout(() => {
+          confirmTimer = null;
+          onProcessStart(child);
+          startBuffer.join('').trim().split('\n').filter(a => a.length).forEach(line => onProcessOutput(line.trim()));
+          startBuffer = null;
+        }, 3000);
+      }
+      const line = (typeof data === 'string' ? data : data.toString('utf-8')).trim();
+      if (startBuffer instanceof Array) {
+        startBuffer.push(line);
+      } else {
+        onProcessOutput(line.trim());
+      }
+    }
+    const command = [
+      process.argv[0],
+      "./deployment/node-deployment.js",
+      "--processor",
+      projectPath,
+    ];
+    executeCommandPredictably(command, projectPath, undefined, onMessage).then(result => {
+      if (hasTimeouted) {
+        return;
+      }
+      if (confirmTimer === undefined) {
+        throw new Error(`Unexpected state after deploy processor execution finished: ${JSON.stringify({ confirmTimer, result })}`);
+      }
+      const isDuringSetup = confirmTimer !== null;
+
+      if (confirmTimer !== null) {
+        clearTimeout(confirmTimer);
+        confirmTimer = null;
+      }
+      onProcessEnd(`Deployment processor child exited${result.exitCode !== 0 ? ' with error code ' + JSON.stringify(result.exitCode) : ''} ${isDuringSetup ? 'during setup ' : ''}after ${result.duration} ms`);
     });
   }
 
@@ -326,208 +361,79 @@ async function nodeDeploymentManager() {
       );
       return;
     }
+    const restartStartTime = new Date().getTime();
     c.log(
       `Processing ${instance ? "restart" : "start"} of instance for "${id}"`
     );
     const instanceBeingReplaced = instancePath;
-    if (instance) {
-      const pid =
-        instance && typeof instance.pid === "number" ? instance.pid : null;
-      if (pid !== lastInstancePid) {
-        c.log(
-          `Warning: pid from instance (instance.pid) is different from last instance pid (lastInstancePid): ${JSON.stringify(
-            { lastPid: lastInstancePid, newPid: pid }
-          )}`
-        );
+    const assertInstanceNotReplaced = () => {
+      if (instanceBeingReplaced !== instancePath) {
+        throw new Error(`Restart request from "${id}" was replaced by "${process.basename(instancePath)}" after ${new Date().getTime() - restartStartTime}`);
       }
+    }
+    assertInstanceNotReplaced();
+    if (instance && typeof instance.pid === 'number' && instance.pid !== lastInstancePid) {
+      c.log(
+        `Warning: Instance pid ${instance.pid} is different from last instance pid ${lastInstancePid}`
+      );
+    }
+    if (instance) {
       expectInstanceClose = true;
       killStartDate = new Date();
       try {
         instance.kill();
       } catch (err) {
-        c.log(`Failed to kill previous instance running at ${pid}`);
+        c.log(`Failed to execute "kill" method on previous instance running with pid ${lastInstancePid}`);
         c.log(`Error: ${err.message}`);
-        await sleep(500);
-        if (await isProcessRunningByPid(pid)) {
-          try {
-            const text = cp.execSync(`kill -9 ${pid}`).toString();
-            c.log(`Sent kill command${text && text.length ? ` and got response: ${text}` : 'to previous instance'}`);
-          } catch (err) {
-            c.log(`Failed to execute kill command at previous instance running at ${pid}`);
-            c.log(`Error: ${err.message}`);
-          }
-        } else if (instance) {
-          console.log(`Check for previous instance at ${pid} indicate it is not running but instance variable still remains`);
-        }
       }
-      for (let i = 0; i < 40; i++) {
-        const delay = (new Date().getTime() - killStartDate.getTime()) / 1000;
-        if (!instance) {
-          if (delay >= 5) {
-            c.log(`Instance took ${delay.toFixed(1)} seconds to close`);
-          }
-          break;
+      await sleep(500);
+    }
+    const instancePidFilePath = path.resolve(projectPath, 'deployment', 'instance.pid');
+    const pidText = await asyncTryCatchNull(fs.promises.readFile(instancePidFilePath, 'utf-8'));
+    if (pidText instanceof Error) {
+      throw pidText;
+    }
+    if (pidText !== null && pidText.trim().length !== 0 && parseInt(pidText.trim()) && !isNaN(parseInt(pidText.trim()))) {
+      const pid = parseInt(pidText.trim());
+      if (await isProcessRunningByPid(pid)) {
+        c.log(`Previous instance is executing at pid ${pid} and will be killed`);
+        const response = await executeCommandPredictably(`kill -9 ${pid}`, process.cwd(), 10_000);
+        if (!response.success) {
+          c.log(`Kill command to previous instance process failed: ${JSON.stringify(response)}`);
         }
-        await sleep(350);
-        if (delay >= 10) {
-          break;
-        }
-      }
-      if (instance) {
-        c.log(`Instance did not close after ${delay.toFixed(1)} seconds`);
-        for (let i = 0; i < 40; i++) {
-          // after 10 waits and every 1 second verify actively if the process exists
-          if (i >= 10 && i % 4 === 0 && pid) {
-            // verify if pid is still running
-            const isRunning = await isProcessRunningByPid(pid);
-            if (!instance) {
-              break;
+        await new Promise(resolve => setTimeout(resolve, 500));
+        for (let i = 0; i < 5; i++) {
+          if (await isProcessRunningByPid(pid)) {
+            if (i === 0) {
+              c.log('Waiting for previous instance process at pid '+pid+' to end...');
             }
-            if (!isRunning) {
-              c.log(
-                `Warning: Process ${pid} is not running but instance object is not null`
-              );
-              break;
-            }
-            if (i <= 14) {
-              c.log(
-                `The previous instance is still running at ${pid} and has not exited after ${delay.toFixed(
-                  1
-                )} seconds for "${id}"`
-              );
-            }
-          }
-          const oldId = path.basename(instanceBeingReplaced);
-          if (i === 20 && instanceBeingReplaced) {
-            const delay = (new Date().getTime() - killStartDate.getTime()) / 1000;
-            c.log(
-              `Previous instance "${oldId}" still has not exited ${delay.toFixed(
-                1
-              )} seconds after kill command so that "${id}" can start`
-            );
-          }
-          if (i === 22 && instance && typeof instance.pid === "number") {
-            try {
-              c.log(`Attempting to stop ${instance.pid} with process.kill()`);
-              process.kill(instance.pid);
-            } catch (err) {
-              c.log(
-                `Could not kill instance "${oldId}" by sending process kill to ${instance.pid}`
-              );
-            }
-          } else if (i === 36 && typeof instance.pid === "number") {
-            try {
-              c.log(`Attempting to stop ${instance.pid} with "kill -9"`);
-              cp.execSync(`kill -9 ${instance.pid}`);
-            } catch (err) {
-              c.log(
-                `Could not kill instance "${oldId}" by running "kill -9" command at ${instance.pid}`
-              );
-            }
-          }
-        }
-      }
-      if (instance) {
-        c.log(
-          `Previous instance at "${instanceBeingReplaced}" failed to exit for "${id}" to start`
-        );
-        const ppid = await getProcessParentIdByPid(pid);
-        c.log(
-          `Attempting to kill previous instance from parent pid ${ppid} to start "${id}"`
-        );
-        try {
-          process.kill(ppid);
-        } catch (err) {
-          console.log(
-            "Attempting to kill previous instance parent caused an error: " +
-            err.message
-          );
-        }
-        for (let i = 0; i < 10 * 4; i++) {
-          if (!instance) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } else {
             break;
           }
-          await sleep(250);
         }
-        if (!instance) {
-          console.log(
-            "Previous instance closed after killing the parent process"
-          );
-        } else {
-          console.log(
-            `Previous instance at pid ${pid} did not close after trying to kill the parent process at pid ${ppid}`
-          );
-          return;
+        if (await isProcessRunningByPid(pid)) {
+          c.log('Continuing start of next request but previous instance process did not seem to have ended');
         }
+      } else {
+        c.log(`Previous instance process is not executing anymore`);
       }
-      await sleep(100);
+    } else {
+      c.log(`There is no data regarding previous instance pid`);
     }
-    if (instanceBeingReplaced !== instancePath) {
-      c.log(
-        `Aborting restart request for "${id}" because a newer version started ("${process.basename(
-          instancePath
-        )}")`
-      );
-      return;
-    }
+    assertInstanceNotReplaced();
     instancePath = targetInstancePath;
-
-    await sleep(100);
-    const instancePidPath = path.resolve(
-      projectPath,
-      "deployment",
-      "instance.pid"
-    );
-    const instanceLogPath = path.resolve(targetInstancePath, "instance.log");
-    /*
-    await fs.promises.writeFile(
-      instanceLogPath,
-      `Process started at ${getDateStringConfigAware(new Date())}\n`,
-      "utf-8"
-    );
-    */
-
-    await sleep(100);
-
-    if (instance !== null && instance !== undefined) {
-      c.log(`Previous instance is still running, attempting to stop it again`);
-      expectInstanceClose = true;
-      instance.kill();
-      for (let i = 0; i < 20; i++) {
-        await sleep(100);
-        if (instance === null || instance === undefined) {
-          break;
-        }
-      }
-      if (instance !== null && instance !== undefined) {
-        c.log(
-          `Restart request for "${id}" failed because previous instance could not be stopped`
-        );
-        if (instance && instance.pid) {
-          c.log(`The instance that caused this has process id ${instance.pid}`);
-        } else {
-          c.log(`The instance that caused this has no process id`);
-        }
-        return;
-      }
-    }
+    await sleep(50);
     if (instancePath !== targetInstancePath) {
-      c.log(
-        `Aborting restart request for "${id}" because the instance path was changed before starting.`
-      );
-      c.log(
-        `The path changed to "${instancePath}" while it was supposed to be "${targetInstancePath}"`
-      );
-      return;
+      throw new Error(`Restart request from "${id}" aborted because it was updated from "${targetInstancePath}" to "${instancePath}"`);
     }
     const writeError = await asyncTryCatchNull(
       fs.promises.writeFile(instanceFilePath, targetInstancePath, "utf-8")
     );
     if (writeError instanceof Error) {
-      c.log(
+      throw new Error(
         `Restart request failed for "${id}" while writing to "${instanceFilePath}": ${writeError.message}`
       );
-      return;
     }
     const startTime = new Date();
     expectInstanceClose = false;
@@ -539,10 +445,13 @@ async function nodeDeploymentManager() {
       lastInstancePid = instance.pid;
     }
     instance.on("error", (err) => {
-      c.log(`Instance from "${id}" failed to start: ${err.message}`);
+      c.log(`Instance "${id}" failed to start: ${err.message}`);
       instance = null;
     });
-    instance.on("exit", (code) => {
+    instance.on("exit", async (code) => {
+      c.log(
+        `Instance "${id}" exited ${expectInstanceClose ? "expectedly" : "unexpectedly"} with code ${JSON.stringify(code)}`
+      );
       instance = null;
       if (restartTimeout) {
         clearTimeout(restartTimeout);
@@ -553,41 +462,32 @@ async function nodeDeploymentManager() {
           ? `${period.toFixed(1)} seconds`
           : period / 60 < 60
             ? `${(period / 60).toFixed(1)} minutes`
-            : `${(period / 60).toFixed(1)} hours`;
+            : `${(period / (60 * 60)).toFixed(1)} hours`;
       c.log(
-        `Instance from "${id}" exited ${expectInstanceClose ? "expectedly" : "unexpectedly"
-        } with code ${JSON.stringify(code)} after running for ${timeString}`
+        `Previous instance "${id}" executed for ${timeString}`
       );
-      if (!expectInstanceClose && period > 30) {
-        c.log(
-          `Restarting instance at "${id}" in 5 seconds as it ran for more than 30 seconds`
-        );
-        restartTimeout = setTimeout(() => {
-          restartTimeout = null;
-          c.log(
-            `Performing restart of instance "${id}" after timeout caused by exit`
-          );
-          executeInstanceRestart(targetInstancePath);
-        }, 5_000);
-      } else if (!expectInstanceClose) {
-        c.log(
-          `Instance process failed early and executed for less than 30 seconds (${period.toFixed(
-            1
-          )} s)`
-        );
-        c.log(
-          `Waiting 15 seconds before restarting early exited instance "${id}"`
-        );
-        restartTimeout = setTimeout(() => {
-          restartTimeout = null;
-          c.log(
-            `Performing restart of instance "${id}" after timeout caused by early exit`
-          );
-          executeInstanceRestart(targetInstancePath);
-        }, 15_000);
-      } else if (expectInstanceClose) {
-        expectInstanceClose = false;
+      if (expectInstanceClose) {
+        return;
       }
+      const startPidText = await asyncTryCatchNull(fs.promises.readFile(instancePidFilePath, 'utf-8'));
+      const secondsToRestart = period > 60 ? 1 : period > 30 ? 3 : period > 10 ? 5 : period > 5 ? 10 : 20;
+      c.log(
+        `Instance that closed unexpectedly will be restarted in ${secondsToRestart.toFixed(1)} seconds`
+      );
+      restartTimeout = setTimeout(async () => {
+        restartTimeout = null;
+        const pidText = await asyncTryCatchNull(fs.promises.readFile(instancePidFilePath, 'utf-8'));
+        if (pidText !== startPidText) {
+          c.log(
+            `Restart of instance "${id}" after timeout aborted because pid file text was updated from ${startPidText} to ${pidText}`
+          );
+          return;
+        }
+        c.log(
+          `Performing restart of instance "${id}" after timeout caused by unexpected exit`
+        );
+        executeInstanceRestart(targetInstancePath);
+      }, secondsToRestart * 1000);
     });
     instance.on("spawn", () => {
       c.log(`Instance from "${id}" started with pid ${instance.pid}`);
@@ -668,56 +568,38 @@ async function nodeDeploymentManager() {
       });
       break;
     } catch (err) {
-      if (err && err.code === "EADDRINUSE" && k <= httpServerRetryAmount / 2) {
+      server = null;
+      if (err && err.code === "EADDRINUSE") {
         c.log(
           `Instance manager detected another server running at ${config.managerPort}`
         );
         c.log(`It will be requested to terminate by sending a HTTP request`);
-        try {
-          const response = await fetch(
-            `http://localhost:${config.managerPort}/kill`,
-            { method: "POST" }
-          );
-          const text = await response.text();
-          if (!response.ok || (text !== "ok" && text !== '"ok"')) {
-            throw new Error(
-              `Unexpected terminate response with status ${response.status
-              } and body "${text.substring(0, 100)}"`
-            );
-          }
-        } catch (err) {
-          c.log(
-            `Request to terminate server at ${config.managerPort} failed: ${err.message}`
-          );
+        const client = getServerClient('instance manager', config.managerPort);
+        const response = await asyncTryCatchNull(client.requestTermination());
+        if (response instanceof Error) {
+          c.log(`The termination request raised an error: ${response.message}`);
+        } else {
+          c.log(`Response from the termination request: ${JSON.stringify(response)}`);
         }
         await sleep(500);
         continue;
       }
-      if (k <= httpServerRetryAmount - 1) {
-        c.log(
-          `Instance manager failed ${k} out of ${httpServerRetryAmount} times to start server at tcp port ${config.managerPort
-          }: ${JSON.stringify(err.message)}`
-        );
-        await sleep(250 + 500 * k);
-        continue;
-      }
       c.log(
-        `Failed ${k} times to start server at tcp port ${config.managerPort}: ${err.message}`
+        `Instance manager failed to start server ${k} times at tcp port ${config.managerPort}: ${err.message}`
       );
-      process.exit(1);
     }
   }
 
   if (!server) {
-    c.log("Instance manager server object is missing");
+    c.log("Instance manager server could not be started and the process will exit");
     process.exit(1);
   }
 
   const pidFilePath = path.resolve(projectPath, "deployment", "manager.pid");
-  c.log(`Writing manager pid at "${pidFilePath}"`);
+  c.log(`Writing manager pid to "${pidFilePath}"`);
   await fs.promises.writeFile(pidFilePath, process.pid.toString(), "utf-8");
 
-  if (instancePath) {
+  if (typeof instancePath === 'string' && instancePath.length) {
     c.log(`Initializing previous instance from "${instancePath}"`);
     try {
       await executeInstanceRestart(instancePath);
@@ -726,39 +608,93 @@ async function nodeDeploymentManager() {
         `Instance manager failed to start previous instance: ${err.message}`
       );
     }
+  } else {
+    c.log(`Instance manager started without a previous instance to execute`);
   }
 }
 
 /**
+ * @param {string | string[]} cmd The shell command to execute as a string or the process to start as a string list
  * @returns {Promise<{startTime: number, spawnTime: number | null, exitTime: number | null, duration: number, output?: string, exitCode: null | number}>}
  */
-function executeShellCommandPredictably(cmd, cwd, timeoutMs = 0, handleOutput) {
+function executeCommandPredictably(cmd, cwd, timeoutMs = 0, handleOutput) {
   return new Promise((resolve) => {
     const response = {
+      success: false,
       startTime: new Date().getTime(),
       spawnTime: null,
       exitTime: null,
       duration: 0,
       output: handleOutput ? undefined : '',
       exitCode: null,
-      success: false,
     };
+    try {
+      const chunks = [];
+      const isArrayCmd = cmd instanceof Array;
+      const spawnConfig = {cwd, stdio: ['ignore', 'pipe', 'pipe'], shell: !isArrayCmd};
+      const child = isArrayCmd ? cp.spawn(cmd[0], cmd.slice(1), spawnConfig) : cp.spawn(cmd, spawnConfig);
 
-    const chunks = [];
-    const child = cp.spawn(cmd, { cwd, stdio: 'pipe', shell: true });
+      let spawnTimeoutTimer = null;
 
-    const timeoutTimer = !timeoutMs || timeoutMs <= 0 ? null : setTimeout(() => {
-      if (response.spawnTime || response.output || response.exitCode !== null) {
-        return;
-      }
-      let msg = `Error: Command timeout triggered after ${new Date().getTime() - response.startTime} ms`;
-      try {
-        if (child && typeof child.pid === 'number' && !child.killed) {
-          child.kill();
+      const onSpawnTimeout = () => {
+        if (response.spawnTime) {
+          return;
         }
-      } catch (err) {
-        msg = `${msg} and killing of child process id ${child.pid} failed with ${err.message}`;
+        spawnTimeoutTimer = null;
+        const msg = `Error: Process spawn timeout triggered after ${new Date().getTime() - response.startTime} ms`;
+        if (handleOutput) {
+          handleOutput(msg);
+        } else {
+          response.output = msg;
+        }
+        response.success = false;
+        resolve(response);
+      };
+
+      if (timeoutMs && timeoutMs > 0) {
+        spawnTimeoutTimer = setTimeout(onSpawnTimeout, timeoutMs);
       }
+
+      child.on('spawn', () => {
+        response.spawnTime = new Date().getTime();
+        if (spawnTimeoutTimer) {
+          clearTimeout(spawnTimeoutTimer);
+          spawnTimeoutTimer = null;
+        }
+      });
+
+      child.on('error', (err) => {
+        if (spawnTimeoutTimer) {
+          clearTimeout(spawnTimeoutTimer);
+          spawnTimeoutTimer = null;
+        }
+        if (handleOutput) {
+          handleOutput(err.message);
+        } else {
+          response.output = err.message;
+        }
+        response.success = false;
+        resolve(response);
+      });
+
+      child.on('exit', (code) => {
+        if (spawnTimeoutTimer) {
+          clearTimeout(spawnTimeoutTimer);
+          spawnTimeoutTimer = null;
+        }
+        response.exitTime = new Date().getTime();
+        response.duration = response.exitTime - response.startTime;
+        response.exitCode = code;
+        if (!handleOutput) {
+          response.output = Buffer.concat(chunks).toString('utf-8').trim();
+        }
+        response.success = code === 0;
+        resolve(response);
+      });
+      child.stdout.on('data', (data) => handleOutput ? handleOutput(data.toString('utf-8')) : chunks.push(data));
+      child.stderr.on('data', (data) => handleOutput ? handleOutput(data.toString('utf-8')) : chunks.push(data));
+    } catch (err) {
+      const msg = `Error: A syncronous exception happened on the child execution function: ${err.stack}`;
       if (handleOutput) {
         handleOutput(msg);
       } else {
@@ -766,48 +702,16 @@ function executeShellCommandPredictably(cmd, cwd, timeoutMs = 0, handleOutput) {
       }
       response.success = false;
       resolve(response);
-    }, timeoutMs);
-    child.on('spawn', () => {
-      response.spawnTime = new Date().getTime();
-    });
-    child.on('error', (err) => {
-      if (timeoutTimer) {
-        clearTimeout(timeoutTimer);
-        timeoutTimer = null;
-      }
-      response.output = err.message;
-      response.success = false;
-      resolve(response);
-    });
-    child.on('exit', (code) => {
-      if (timeoutTimer) {
-        clearTimeout(timeoutTimer);
-        timeoutTimer = null;
-      }
-      response.exitTime = new Date().getTime();
-      response.duration = response.exitTime - response.startTime;
-      response.exitCode = code;
-      if (!handleOutput) {
-        response.output = Buffer.concat(chunks).toString('utf-8').trim();
-      }
-      response.success = code === 0;
-      resolve(response);
-    });
-    child.stdout.on('data', (data) => handleOutput ? handleOutput(data.toString('utf-8')) : chunks.push(data));
-    child.stderr.on('data', (data) => handleOutput ? handleOutput(data.toString('utf-8')) : chunks.push(data));
+    }
   });
 }
 
-async function nodeDeploymentProcessor() {
-  if (!args[1]) {
-    c.log("Node Deployment Processor does not have a project path as argument");
-    throw new Error("Missing project target path");
-  }
-  if (args[1] !== process.cwd()) {
-    c.log(`Node Deployment Processor target project mismatch`);
-    c.log(`Manager started at "${process.cwd()}"`);
-    c.log(` First argument is "${args[1]}"`);
-    throw new Error("Unmatching project target path");
+async function nodeDeploymentDeploymentProcessor() {
+  if (!args[1] || args[1] !== process.cwd()) {
+    c.log(`Argument project path ${!args[1] ? "missing" : "mismatch"}`);
+    c.log(` First argument: "${JSON.stringify(args[1])}"`);
+    c.log(`    Manager cwd: "${process.cwd()}"`);
+    throw new Error(`${!args[1] ? "Missing" : "Unmatching"} project target path argument on deployment processor`);
   }
   const projectPath = path.resolve(args[1]);
   const deploymentStat = await asyncTryCatchNull(
@@ -905,7 +809,7 @@ async function nodeDeploymentProcessor() {
             const hasInstanceLog = fs.existsSync(path.resolve(pastInstancePath, "instance.log"));
             c.log(`Removing past instance folder "${instanceFolderName}" that ${hasInstanceLog ? "contains" : "does not have"} an execution log file ("instance.log")`);
 
-            const { duration, exitCode, output, success } = await executeShellCommandPredictably(`rm -rf "${pastInstancePath}"`, instanceParentDir, 10_000);
+            const { duration, exitCode, output, success } = await executeCommandPredictably(`rm -rf "${pastInstancePath}"`, instanceParentDir, 10_000);
             if (!success) {
               hadError = true;
               c.log(`Failed to remove old pipeline folder "${exceedList[i]}" with exit code ${JSON.stringify(exitCode)} after ${JSON.stringify(duration)} ms`);
@@ -949,7 +853,7 @@ async function nodeDeploymentProcessor() {
           c.log(`Pipeline "${id}" - Step ${i + 1} - Creating dependency folder "node_modules" with command:`);
         }
         c.log(`Pipeline "${id}" - Step ${i + 1} - $ ${command.join(" ")}`);
-        const { duration, exitCode, success } = await executeShellCommandPredictably(
+        const { duration, exitCode, success } = await executeCommandPredictably(
           command.join(' '),
           repositoryPath,
           180_000,
@@ -983,7 +887,7 @@ async function nodeDeploymentProcessor() {
           c.log(`Pipeline "${id}" - Step ${i + 1} - Skipped because ${skipReason}`);
         } else {
           c.log(`Pipeline "${id}" - Step ${i + 1} - $ ${step.command}`);
-          const { duration, exitCode, success } = await executeShellCommandPredictably(
+          const { duration, exitCode, success } = await executeCommandPredictably(
             step.command,
             repositoryPath,
             180_000,
@@ -1005,7 +909,7 @@ async function nodeDeploymentProcessor() {
     }
   }
   async function waitThenProcessPipelineRequest(id, repositoryPath) {
-    // verify if the current processor is still the most recentv
+    // confirm if the current processor is still the most recent
     const pidFilePath = path.resolve(
       projectPath,
       "deployment",
@@ -1032,7 +936,6 @@ async function nodeDeploymentProcessor() {
       }, 100);
       return;
     }
-
     if (runningPipelineId) {
       c.log(`"${id}" will wait for "${runningPipelineId}" to be stopped`);
       replacingPipelineId = id;
@@ -1052,11 +955,10 @@ async function nodeDeploymentProcessor() {
     }
     if (runningPipelineId !== null && runningPipelineId !== undefined) {
       c.log(
-        `The pipeline "${id}" could not be executed because "${runningPipelineId}" was executing.`
+        `The pipeline "${id}" could not be executed because "${runningPipelineId}" was executing`
       );
       return;
     }
-
     replacingPipelineId = null;
     runningPipelineId = id;
     executeDeployPipeline(id, repositoryPath).catch((err) => {
@@ -3059,25 +2961,6 @@ async function killProcessByPid(pid, name) {
     )} seconds after attempting to kill it`
   );
 }
-async function getProcessParentIdByPid(pid) {
-  const statusFilePath = "/proc/" + pid + "/status";
-
-  if (!fs.existsSync(statusFilePath)) {
-    return null;
-  }
-
-  const statusContent = fs.readFileSync(statusFilePath, "utf8");
-  const lines = statusContent.toLowerCase().split("\n");
-
-  for (const line of lines) {
-    if (line.startsWith("ppid:")) {
-      const parentPid = parseInt(line.substring(5).trim());
-      return parentPid;
-    }
-  }
-
-  return null;
-}
 
 async function isProcessRunningByPid(pid) {
   let yesCount = 0;
@@ -3101,7 +2984,7 @@ function processHttpServerRequest(name, targetFunc, req, res) {
       .end(req.url === "/" ? `${name} internal http server` : "");
     return;
   }
-  if (req.url === "/kill") {
+  if (req.url === "/api/terminate/") {
     res.end();
     c.log(
       `The ${name} received a kill request in its internal http server and will terminate`
