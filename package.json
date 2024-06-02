@@ -1,12 +1,22 @@
 {
-  "name": "node-deployment",
+  "name": "node-project-deployment-manager",
+  "type": "module",
   "version": "1.0.0",
-  "description": "Node script to interactively setup and configure projects with automatic deployment",
-  "main": "node-deployment.js",
+  "description": "Program to process CI/CD of Node.js projects executing deployment steps on update (continuous integration) and server process restart when new versions are available (continuous delivery).",
+  "main": "index.mjs",
   "scripts": {
-    "start": "node node-deployment.js"
+    "cli": "node index.mjs",
+    "start": "node sample-start.mjs",
+    "build": "node sample-build.mjs"
   },
-  "keywords": [],
+  "keywords": [
+    "node.js",
+    "project deployment",
+    "self-hosted",
+    "ci-cd",
+    "continuous-integration",
+    "continuous-delivery"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {},
