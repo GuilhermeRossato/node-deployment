@@ -1,5 +1,4 @@
 import child_process from "child_process";
-import { getIsDryMode } from "./executeWrappedSideEffect.js";
 
 /**
  * @param {string | string[]} cmd
@@ -27,21 +26,6 @@ export function executeCommandPredictably(
     const response = {};
     const chunks = [];
     let timer = null;
-    if (getIsDryMode()) {
-        const description = 'Operating on manager process from processor';
-        console.log(
-          `Skipping side effect (dry-run enabled): ${description}`
-        );
-        response.start = new Date();
-        response.output = 'Skipped because of dry-run';
-        response.exitCode = 0;
-        setTimeout(() => {
-          response.duration =
-            (new Date().getTime() - response.start.getTime()) / 1000;
-          resolve(response);;
-        }, 2000);
-        return;
-    }
     try {
       const child = isArray
         ? child_process.spawn(cmd[0], cmd.slice(1), spawnConfig)

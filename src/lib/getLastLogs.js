@@ -16,7 +16,7 @@ export async function getLastLogs(
 ) {
   if (modes.length === 0) {
     const logFolder = path.resolve(
-      process.env.LOG_FOLDER_PATH || process.cwd()
+      process.env.LOG_FOLDER_NAME || process.cwd()
     );
     const files = await asyncTryCatchNull(fs.promises.readdir(logFolder));
     if (files instanceof Array) {
@@ -31,7 +31,7 @@ export async function getLastLogs(
     modes.map((mode, i) =>
       readLogFile(
         path.resolve(
-          process.env.LOG_FOLDER_PATH || process.cwd(),
+          process.env.LOG_FOLDER_NAME || process.cwd(),
           `${mode}.log`
         ),
         -size,

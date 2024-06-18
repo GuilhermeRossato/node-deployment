@@ -3,16 +3,16 @@ import path from "node:path";
 
 export async function checkPathStatus(target) {
   const result = {
-    path: path.resolve(...(target instanceof Array ? target : [target])),
-    name: path.basename(target),
+    path: path.resolve(...(target instanceof Array ? target : [target])).replace(/\\/g, '/'),
+    name: path.basename(target instanceof Array ? target[target.length-1] : target),
     exists: false,
-    type: { file: false, dir: false, bare: false, project: false },
+    type: { file: false, dir: false, bare: false, project: false, initialized: false },
     children: null,
     parent: null,
   };
   try {
     await fs.promises.stat(path.dirname(target));
-    result.parent = path.dirname(target);
+    result.parent = path.dirname(target).replace(/\\/g, '/');
     const stat = await fs.promises.stat(target);
     result.type.dir = stat.isDirectory && stat.isDirectory();
     result.type.file = stat.isFile && stat.isFile();
@@ -36,6 +36,10 @@ export async function checkPathStatus(target) {
         "utf-8"
       );
       result.type.bare = config.replace(/\s/g, "").includes("bare=true");
+      if (result.type.bare && result.children.includes('refs') && result.children.includes(process.env.DEPLOYMENT_FOLDER_NAME || 'deployment')) {
+        const dep = await checkPathStatus([result.path, process.env.DEPLOYMENT_FOLDER_NAME || 'deployment']);
+        result.type.initialized = dep.exists && dep.type.dir && dep.children.includes('node-deploy.cjs') && dep.children.includes('.env');
+      }
     }
   } catch (err) {
     console.log(err);

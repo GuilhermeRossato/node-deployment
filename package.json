@@ -12,11 +12,15 @@
   },
   "keywords": [
     "node.js",
+    "deployment",
+    "development cycle",
     "project deployment",
     "self-hosted",
-    "ci-cd",
+    "self-hosting",
     "continuous-integration",
-    "continuous-delivery"
+    "continuous-delivery",
+    "ci-cd",
+    "cd"
   ],
   "author": "",
   "license": "MIT",

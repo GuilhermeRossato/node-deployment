@@ -31,12 +31,12 @@ export function configLog(source, pid, date, hour, prefix) {
 }
 
 /**
- * 
- * @param {string} method 
+ *
+ * @param {string} method
  * @param {string | undefined | null} [logFilePath]
- * @returns 
+ * @returns
  */
-export default function attachToConsole(method = "log", logFilePath = '') {
+export default function attachToConsole(method = "log", logFilePath = "") {
   const originalMethod = console[method].bind(console);
 
   let inside = false;
@@ -62,7 +62,9 @@ export default function attachToConsole(method = "log", logFilePath = '') {
               .trim()
           )
           .filter(
-            (a) => (a.includes(".js:") || a.includes(".cjs:")) && !a.includes(attachToConsole.name)
+            (a) =>
+              (a.includes(".js:") || a.includes(".cjs:")) &&
+              !a.includes(attachToConsole.name)
           );
         let src = stackFileList.slice(0, 1).reverse().join(" -> ");
         if (!src) {

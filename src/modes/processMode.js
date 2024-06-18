@@ -100,7 +100,7 @@ export async function initProcessor(options) {
   );
   const deploymentPath = path.resolve(
     options.dir,
-    process.env.DEPLOYMENT_FOLDER_PATH
+    process.env.DEPLOYMENT_FOLDER_NAME
   );
   await waitForUniqueProcessor(deploymentPath, nextInstancePath);
   const execPurgeRes = await execPurge(
