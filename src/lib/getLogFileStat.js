@@ -1,10 +1,10 @@
 import fs from "fs";
-import { getPersistFilePath } from "./attachToProcessLog.mjs";
-import { getDebugLog } from "./getDebugLog.mjs";
+import { getPersistFilePath } from "./attachToProcessLog.js";
+import { getconsole.log } from "./getconsole.log.js";
 const debug = false;
 
 export async function getLogFileStat(deploymentLog = undefined) {
-  const debugLog = getDebugLog(debug);
+  const console.log = getconsole.log(debug);
   
   if (!deploymentLog) {
     deploymentLog = getPersistFilePath();
@@ -21,7 +21,7 @@ export async function getLogFileStat(deploymentLog = undefined) {
     elapsed = new Date().getTime() - stat.mtimeMs;
     size = stat.size;
   } catch (err) {
-    debugLog(`Could not stat log file at ${JSON.stringify(deploymentLog)}`);
+    console.log(`Could not stat log file at ${JSON.stringify(deploymentLog)}`);
     return {
       size,
       date,

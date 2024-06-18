@@ -1,51 +1,49 @@
 import fs from "fs";
 import path from "path";
-import { executeCommandPredictably } from "./lib/executeCommandPredictably.mjs";
-import { safeFileRead } from "./lib/safeFileRead.mjs";
-import { safeFileStat } from "./lib/safeFileStat.mjs";
-import { sendToManager } from "./lib/sendToManager.mjs";
-import { sleep } from "./lib/sleep.mjs";
-import { asyncTryCatchNull } from "./lib/asyncTryCatchNull.mjs";
-import { getDebugLog } from "./lib/getDebugLog.mjs";
-import {
-  hasRestartArg,
-  hasTerminateArg,
-  newProductionFolder,
-  productionFolder,
-  projectRepositoryFolderPath,
-} from "../config.mjs";
-const debug = true;
+import sendInternalRequest from "../lib/sendInternalRequest.js";
+import { executeCommandPredictably } from "../lib/executeCommandPredictably.js";
+import asyncTryCatchNull from "../lib/asyncTryCatchNull.js";
+import sleep from "../lib/sleep.js";
+
+const hasStartArg = process.argv.includes("--start");
+const hasRestartArg = process.argv.includes("--restart");
+const hasShutdownArg = process.argv.includes("--shutdown");
+
+const debugProcess = true;
 
 export async function initProcessor() {
-  const debugLog = getDebugLog(debug);
-  if (hasTerminateArg || hasRestartArg) {
+  if (hasShutdownArg || hasRestartArg || hasStartArg) {
     console.log(
       hasRestartArg ? "Restarting manager server" : "Terminating manager server"
     );
-    const result = await sendToManager("terminate", {}, false);
+    const result = await sendInternalRequest("target", "shutdown", {});
     console.log(result);
   }
   const execPurgeRes = await execPurge();
-  console.log(`execCheckout`);
+  console.log(`execCheckout`, execPurgeRes);
   const execCheckoutRes = await execCheckout();
-  console.log(`execCopy`);
+  console.log(`execCopy`, execCheckoutRes);
   const execCopyRes = await execCopy();
-  console.log(`execInstall`);
+  console.log(`execInstall`, execCopyRes);
   const execInstallRes = await execInstall();
   const execBuildRes = await execScript("build");
-  if (!hasTerminateArg || hasRestartArg) {
-    debugLog(`Sending project server replacement request`);
+  if (!hasShutdownArg || hasRestartArg) {
+    console.log(`Sending project server replacement request`);
     const r = execReplaceProjectServer();
-    debugLog(`execReplace`, r);
+    console.log(`execReplace`, r);
   }
-  debugLog(`Processor finished`);
+  console.log(`Processor finished`);
 }
 
+const newProductionFolder = "new-instance";
+const productionFolder = "instance";
+const projectRepositoryFolderPath = ".";
+
 async function execPurge() {
-  debug && console.log("Executing purge", { newProductionFolder });
-  const stat = await safeFileStat(newProductionFolder);
+  debugProcess && console.log("Executing purge", { newProductionFolder });
+  const stat = await asyncTryCatchNull(fs.promises.stat(newProductionFolder));
   if (!stat) {
-    debug &&
+    debugProcess &&
       console.log("Skipped purge because new production folder does not exist");
     return;
   }
@@ -55,28 +53,30 @@ async function execPurge() {
     path.dirname(newProductionFolder),
     10_000
   );
-  debug && console.log("Removal of new production folder:", result);
+  debugProcess && console.log("Removal of new production folder:", result);
 
-  const newProdStat = await safeFileStat(newProductionFolder);
+  const newProdStat = await asyncTryCatchNull(
+    fs.promises.stat(newProductionFolder)
+  );
   if (result.error || result.exitCode !== 0) {
     if (newProdStat) {
       const list = await asyncTryCatchNull(
         fs.promises.readdir(newProductionFolder)
       );
-      if (list.length !== 0) {
+      if (!(list instanceof Array) || list.length !== 0) {
         throw new Error(
           `Failed to remove new production folder: ${JSON.stringify({
             result,
           })}`
         );
       } else {
-        debug &&
+        debugProcess &&
           console.log(
             "Removal of new production folder failed but it is empty"
           );
       }
     } else {
-      debug &&
+      debugProcess &&
         console.log(
           "Removal of new production folder failed but it does not exist"
         );
@@ -85,14 +85,14 @@ async function execPurge() {
   // Check
   for (let i = 0; i < 5; i++) {
     await sleep(50);
-    const stat = await safeFileStat(newProductionFolder);
+    const stat = await asyncTryCatchNull(fs.promises.stat(newProductionFolder));
     if (!stat) {
       continue;
     }
     const list = await asyncTryCatchNull(
       fs.promises.readdir(newProductionFolder)
     );
-    if (list.length === 0) {
+    if (!(list instanceof Array) || list.length === 0) {
       continue;
     }
     throw new Error("Purge failed");
@@ -101,9 +101,10 @@ async function execPurge() {
 }
 
 async function execCheckout() {
-  debug && console.log("Executing checkout", { projectRepositoryFolderPath });
+  debugProcess &&
+    console.log("Executing checkout", { projectRepositoryFolderPath });
   {
-    const stat = await safeFileStat(newProductionFolder);
+    const stat = await asyncTryCatchNull(fs.promises.stat(newProductionFolder));
     if (!stat) {
       // Create new production folder
       const result = await executeCommandPredictably(
@@ -138,14 +139,13 @@ async function execCheckout() {
 }
 
 async function execCopy() {
-  const debugLog = getDebugLog(debug);
-  debugLog("Executing copy");
+  console.log("Executing copy");
   const files = ["data", ".env", "node_modules", "build"];
   for (const file of files) {
     const source = path.resolve(productionFolder, file);
-    const s = await safeFileStat(source);
-    if (!s) {
-      debugLog("Skipped copy of not found:", file);
+    const s = await asyncTryCatchNull(fs.promises.stat(source));
+    if (!(s instanceof fs.Stats)) {
+      console.log("Skipped copy of not found:", file);
       continue;
     }
     if (s.isDirectory()) {
@@ -154,9 +154,9 @@ async function execCopy() {
       console.log("Copying file", file, "...");
     }
     const target = path.resolve(newProductionFolder, file);
-    const t = await safeFileStat(target);
+    const t = await asyncTryCatchNull(fs.promises.stat(target));
     if (s.isFile() && t) {
-      debugLog("Removing existing target before copy for:", file);
+      console.log("Removing existing target before copy for:", file);
       const result = await executeCommandPredictably(
         `rm -rf "${target}"`,
         path.dirname(newProductionFolder),
@@ -178,8 +178,7 @@ async function execCopy() {
 }
 
 async function execInstall(isYarn = false) {
-  const debugLog = getDebugLog(debug);
-  debugLog("Executing install");
+  console.log("Executing install");
   const files = [
     { name: "package.json", origin: null, target: null },
     { name: "package-lock.json", origin: null, target: null },
@@ -188,26 +187,26 @@ async function execInstall(isYarn = false) {
   ];
   for (let i = 0; i < files.length; i++) {
     const fileName = files[i].name;
-    files[i].origin = await safeFileRead(
-      path.resolve(productionFolder, fileName)
+    files[i].origin = await asyncTryCatchNull(
+      fs.promises.readFile(path.resolve(productionFolder, fileName))
     );
-    files[i].target = await safeFileRead(
-      path.resolve(newProductionFolder, fileName)
+    files[i].target = await asyncTryCatchNull(
+      fs.promises.readFile(path.resolve(newProductionFolder, fileName))
     );
   }
-  debug &&
+  debugProcess &&
     console.log(
       "Install files from production folder:",
       files.filter((f) => f.origin).map((f) => f.name)
     );
-  debug &&
+  debugProcess &&
     console.log(
       "Install files at new production folder:",
       files.filter((f) => f.target).map((f) => f.name)
     );
   const [pkg, pklock, yarnlock, nodemodules] = files;
   if (!pkg.target) {
-    debug &&
+    debugProcess &&
       console.log('Install skipped because "package.json" was not found');
     return;
   }
@@ -217,7 +216,7 @@ async function execInstall(isYarn = false) {
     pklock.target &&
     pklock.origin === pklock.target
   ) {
-    debug &&
+    debugProcess &&
       console.log(
         'Install skipped because both "package.json" and "package-lock.json" matched'
       );
@@ -229,7 +228,7 @@ async function execInstall(isYarn = false) {
     yarnlock.target &&
     yarnlock.origin === yarnlock.target
   ) {
-    debug &&
+    debugProcess &&
       console.log(
         'Install skipped because both "package.json" and "yarn.lock" matched'
       );
@@ -247,7 +246,7 @@ async function execInstall(isYarn = false) {
       : "install";
   const cmd = (manager + " " + arg).trim();
 
-  debug && console.log("Install command:", cmd);
+  debugProcess && console.log("Install command:", cmd);
   const result = await executeCommandPredictably(
     cmd,
     newProductionFolder,
@@ -260,10 +259,10 @@ async function execInstall(isYarn = false) {
       })}`
     );
   }
-  const stat = await safeFileRead(
-    path.resolve(newProductionFolder, "node_modules")
+  const stat = await asyncTryCatchNull(
+    fs.promises.readFile(path.resolve(newProductionFolder, "node_modules"))
   );
-  debug &&
+  debugProcess &&
     console.log(
       "Installation finished",
       stat && !nodemodules.target
@@ -276,14 +275,16 @@ async function execInstall(isYarn = false) {
 
 async function execScript(script = "build", isYarn = false, timeout = 10_000) {
   const prefix = isYarn ? `yarn run` : "npm run";
-  const pkgText = await safeFileRead(
-    path.resolve(newProductionFolder, "package.json")
+  const pkgText = await asyncTryCatchNull(
+    fs.promises.readFile(path.resolve(newProductionFolder, "package.json"))
   );
-  const pkg = pkgText ? JSON.parse(pkgText) : null;
-  const deps = pkg ? pkg.scripts : null;
-  if (!deps || !deps[script]) {
+  const pkg = typeof pkgText === "string" ? JSON.parse(pkgText) : null;
+  const scriptRec = pkg ? pkg.scripts : null;
+  if (!scriptRec || !scriptRec[script]) {
     throw new Error(
-      `Could not find npm script "${script}" at "package.json" to execute`
+      `Could not find npm script "${script}" at "package.json" to execute at script record: ${JSON.stringify(
+        scriptRec
+      )}`
     );
   }
   const cmd = `${prefix} ${script}`;
@@ -302,10 +303,10 @@ async function execScript(script = "build", isYarn = false, timeout = 10_000) {
       })}`
     );
   }
-  debug && console.log("Script was successfull");
+  debugProcess && console.log("Script was successfull");
 }
 
 async function execReplaceProjectServer() {
-  const result = await sendToManager("upgrade");
+  const result = await sendInternalRequest("manager", "upgrade");
   console.log("Response", result);
 }

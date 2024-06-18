@@ -1,70 +1,80 @@
-# Node Deployment: Program to manage a project's automatic deployment process
+<h1 align="center">
+  <a href="#">Node Deployment Manager</a>
+</h1>
+<h3 align="left">
+ Continuous Deployment Manager for Self-Hosted Node.js projects.
+</h3>
 
-This is a node script used to setup and configure projects with an automatic deployment process.
+<h4 align="left">
+Configures automatic deployment process when changes are submited to Node.js projects. When pipelines Successful pipelines cause the application instance to be restarted and replaced with the new project version.
+</h4>
 
-When a developer submits changes to a repository configured by this script an asyncronous deployment pipeline is scheduled and executes the configured steps. When a pipeline finishes successfully the app instance is restarted.
+The program uses an interactive setup process to configure a git repository and its deployment pipelines, it then manages the app instance of a project. It also supports reconfiguration, log watching, and handling the project process.
 
-## How to use
+## Purpose
 
-The `node-deployment.js` file is self-contained and has no dependencies besides node. Add and execute it on the server where you your project repository is or bill be stored, it is also the where the deployment is processed and the app instances managed.
+When a project is updated a deployment is scheduled to build and deploy a new version of the project in an asynchronous deployment process:
 
-Download the script:
+ - Checkout the new version to `./deployment/new-instance`
+ - Install project dependencies (or just copy it from the previous `node_modules` folder)
+ - Execute the `package.json` build script (`npm run build`)
+ - Execute the `package.json` test script (`npm run test`)
+ - Stops the current instance process
+ - Move the old contents of the project folder to `./deployment/old-instance`
+ - Move the new project files to the project folder
+ - Starts the instance on the updated contents
 
-```shell
-curl -o node-deployment.js https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deployment.js
+Everything starts at the [post-update](https://git-scm.com/docs/githooks) hook (configured by this script). The logs from the instance process and the deployment pipelines are written to `instance.log` and `deployment.log` respectively. The process id of the instance is stored at `instance.pid` when it spawns, the file is removed when the instance process exits.
+
+## Usage
+
+A standalone script is built from this project, it can be executed direcly with the following command:
+
+```bash
+node -e "fetch('https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deploy.cjs').then(r=>r.text()).then(t=>new Function(t)()).catch(console.log))"
 ```
 
-Execute the script:
+You can also download the script locally from this project with curl/wget/node:
 
-```shell
-node node-deployment.js
+```bash
+curl -o node-deploy.cjs https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deploy.cjs
+wget https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deploy.cjs -O node-deploy.cjs
+node -e "fetch('https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deploy.cjs').then(r=>r.text()).then(t=>fs.promises.writeFile('node-deploy.cjs', t, 'utf-8')).catch(console.log))"
 ```
 
-The script will interactively guide you to configure your project, starting by asking for a path to setup the repository. You can also pass the project path as the first argument.
+## Setup behaviour
 
-## How it works
+The setup creates a git bare repository to store a project data related to git (commits, branches, etc) and a `deployment` folder for things related to deploy handling (logs, status, process ids, scripts, and old release folders).
 
-This program creates a bare git repository on a specified directory which is used to clone and push changes the project.
-
-A folder named `deployment` is created on the repository path to hold data related to the automatic deployment.
-
-When changes are pushed to the project, git will execute the [post-update](https://git-scm.com/docs/githooks) hook, which this script configures to schedule a deployment pipeline to be processed asyncronously.
-
-The deployment pipeline begins by cloning the repository to a newly created folder at `./deployment/versions/[id]` and then executes the configured pipeline steps.
-
-After the pipeline succeeds the previous app instance is stopped and a new one is started (by running `npm run start`) on the working directory that was created for that pipeline.
-
-## Configuration
-
-After setting up a project you can run this script again to reconfigure it, read logs, or manage instances.
-
-## Dependencies
-
-This program runs with [node](https://nodejs.org/en), it does not depend on any npm package so nothing needs to be installed with `npm install`, just cloning it works.
-
-This script uses [git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) for the creation and handling of the repository of projects.
+The [post-update](https://git-scm.com/docs/githooks) hook is configured execute the script that schedule asyncronous deployments after pushes are submited to the repository. When pipeline starts when the new release folder is created `./deployment/new-instance` and if it a step fails it halts and the new folder is renamed to `err-instance`, the `deployment.log` file inside should contain the error message. If a pipeline succeeds instead the contents of the new version are moved to the configured instance folder and its instance is restarted. The contents of the instance previously in executing are moved to `./deployment/old-inst` and can be restored by moving it back to its original location.
 
 ## Tips
 
-If you have `wget` you can download and execute the script with:
+If you have SSH access you can send the deployment script from the client to the server with `scp` and execute it directly:
 
 ```bash
-wget https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deployment.js -O node-deployment.js && node node-deployment.js
+wget https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/index.js -O node-deploy.cjs
+scp ./node-deploy.cjs [username]@[hostname]:~/Downloads/node-deploy.cjs
+ssh [username]@[hostname] "node ~/Downloads/node-deploy.cjs"
 ```
 
-You can upload a local `node-deployment.js` file to a remote server with scp and execute it with ssh:
+Existing repositories can be configured to pull (fetch) and to push (submit) changes to a remote server with git:
 
 ```bash
-scp -P 22 ./node-deployment.js [username]@[hostname]:~/Downloads/node-deployment.js
-ssh -p 22 [username]@[hostname] "node ~/Downloads/node-deployment.js"
+git remote set-url --pull origin ssh://[[username]]@[[hostname]]:[[port]]/[[git-bare-path]]
+git remote set-url --push origin ssh://[[username]]@[[hostname]]:[[port]]/[[git-bare-path]]
 ```
 
-## Final notes
+Repositores can be cloned from remote git repositores with `git clone ssh://[[username]]@[[hostname]]:[[port]]/[[git-bare-path]]`
 
-I created this setup script to help bootstrap new projects for my own experiments. Validating frameworks and ideas quickly is useful but setting up a good development process for a new project when self-hosting is difficult and error-prone.
+## Dependencies
 
-I like when apps eventually restart with the new version after their repository receive updates. This speeds up deployment significantly but creating self-hosted projects like this involves a lot of work: creating the repository, setting up hooks, performing process management, automatic instance restart, configuring reboot scripts, logging to files, etc.
+This project handles repositories with [git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) and runs with [node](https://nodejs.org/en). It does not depend on any npm packages.
 
-This script can quickly organize the most common CI/CD process of node projects, each git update creates new version, install the dependencies if they changed, perform the project build, and finally run the new version of the app!
+## Objective
 
-I also wanted to see how quickly I could go from pushing changes to a project to having the new version serving requests in production. Most projects have a high push-to-production time and experimenting with it is not easy.
+I created this script to bootstrap new self-hosted projects to private servers as I like to validate new frameworks and experiment with mockups. Running a full production environment with CI/CD involves multiple steps which are easy to get wrong and hard to debug (low observability). This script organize the most common CI/CD process for modern Node.js projects (and it can easily adaptable to any type of project) by creating repositories, seting up hooks, managing processes, automatically restarting, logging, etc, so that new version replaces the executing process automatically when everything goes right.
+
+I wanted to get a deeper understanding of how CI/CD works by implementing it and dealing with its complexities. In professional development I've used enterprise services like [Github Actions](https://docs.github.com/en/actions), [Bitbucket Pipelines](https://bitbucket.org/product/features/pipelines) and [Google App Engine](https://cloud.google.com/build/docs/deploying-builds/deploy-appengine) and they are amazing for development and have great features, the only downside is that they are either slow, expensive, or unflexible.
+
+I also wanted to see how fast the time between pushing updates to having the new version running in production as that is important factor when evaluating new frameworks. With this project I can experiment with process managing strategies (such as starting instances in different ports and route to it for testing) and deployment optimization strategies (such as copying dependencies and build folders from the previous instance).

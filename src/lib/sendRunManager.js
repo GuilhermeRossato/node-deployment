@@ -1,26 +1,19 @@
-import { managerPort } from "../../config.mjs";
-import { executeManagerAtBackground } from "./executeManagerAtBackground.mjs";
-import { sleep } from "./sleep.mjs";
-
-const debug = true;
+import { executeManagerAtBackground } from "./executeManagerAtBackground.js";
+import { sleep } from "./sleep.js";
 
 let hasStartedManager = false;
 let hasWaitedTermination = false;
 
-export async function sendToManager(
+export async function sendRunManager(
   type = "",
   data = {},
   canStartManager = true
 ) {
+  const debug = true;
+  
   debug && console.log(`Sending to manager: "${type}"`);
   try {
-    const response = await fetch(
-      `http://127.0.0.1:${managerPort}/api/${type}`,
-      {
-        method: "POST",
-        body: JSON.stringify(data),
-      }
-    );
+    const response = sendInternalRequest
     const text = await response.text();
     if (!text) {
       throw new Error(
@@ -40,7 +33,7 @@ export async function sendToManager(
         hasWaitedTermination = true;
         setTimeout(() => (hasWaitedTermination = false), 5000);
         await sleep(500);
-        return await sendToManager(type, data, canStartManager);
+        return await sendRunManager(type, data, canStartManager);
       }
       return obj;
     } catch (err) {
@@ -67,7 +60,7 @@ export async function sendToManager(
         );
       await executeManagerAtBackground();
       await sleep(500);
-      return await sendToManager(type, data, canStartManager);
+      return await sendRunManager(type, data, canStartManager);
     }
     debug &&
       console.log(

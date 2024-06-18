@@ -5,7 +5,7 @@ export function getCurrentStackList() {
     .substring(text.indexOf("\n", text.indexOf(start) + 1) + 1)
     .split("\n")
     .map((line) =>
-      line.includes(".js") || line.includes(".mjs")
+      line.includes(".js") || line.includes(".js")
         ? line.replace(/\)/g, "").trim()
         : ""
     )

@@ -1,7 +1,4 @@
 import child_process from "child_process";
-import { getDebugLog } from "./getDebugLog.mjs";
-
-const debug = false;
 
 export async function spawnBackgroundChild(
   cmd = "node",
@@ -9,10 +6,9 @@ export async function spawnBackgroundChild(
   cwd = process.cwd(),
   detached = true
 ) {
-  const debugLog = getDebugLog(debug);
-
+  
   return await new Promise((resolve, reject) => {
-    debugLog(
+    console.log(
       "Starting",
       detached ? "detached" : "attached",
       "child:",
@@ -25,7 +21,7 @@ export async function spawnBackgroundChild(
       stdio: detached ? "ignore" : ["ignore", "pipe", "pipe"],
     });
     const pid = child.pid;
-    debugLog("Child pid:", pid);
+    console.log("Child pid:", pid);
     if (detached) {
       child.unref();
       resolve();
@@ -35,10 +31,10 @@ export async function spawnBackgroundChild(
     child.stdout && child.stdout.on("data", output);
     child.stderr && child.stderr.on("data", output);
     child.on("spawn", () => {
-      debugLog("Child spawned");
+      console.log("Child spawned");
     });
     child.on("exit", (code) => {
-      debugLog(`Child exited with code: ${code}`);
+      console.log(`Child exited with code: ${code}`);
       if (code === 0) {
         // @ts-ignore
         resolve();
@@ -47,7 +43,7 @@ export async function spawnBackgroundChild(
       }
     });
     child.on("error", (err) => {
-      debugLog("Child error:", err);
+      console.log("Child error:", err);
       reject(err);
     });
   });
