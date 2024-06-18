@@ -7,6 +7,7 @@ import { initStatus } from "./modes/statusMode.js";
 import { initLogs } from "./modes/logsMode.js";
 import { initProcessor } from "./modes/processMode.js";
 import { initHelp } from "./modes/helpMode.js";
+import { initUpgrade } from "./modes/upgradeMode.js";
 
 /**
  * @typedef {Object} Options
@@ -34,6 +35,7 @@ const initRecord = {
   schedule: initScheduler,
   process: initProcessor,
   manager: initManager,
+  upgrade: initUpgrade,
 };
 
 const modes = Object.keys(initRecord);
