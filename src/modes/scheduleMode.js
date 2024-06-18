@@ -1,9 +1,8 @@
 // @ts-check
 import path from "path";
-import { getLastLogs } from "../lib/streamLogs.js";
 import { spawnBackgroundChild } from "../lib/spawnBackgroundChild.js";
-import { outputDatedLine } from "../lib/outputDatedLine.js";
-import sleep from "../lib/sleep.js";
+import { printPreviousLogs } from "../lib/printPreviousLogs.js";
+import { waitForLogFileUpdate } from "../lib/waitForLogFileUpdate.js";
 
 /**
  * @param {import("../getProgramArgs.js").Options} options
@@ -42,41 +41,16 @@ export async function initScheduler(options) {
   
   const cursor = list.length === 0 ? 0 : Math.min(...list.map(a => a.time).filter(a => a > 0));
   const pids = list.map(a => a.pid).filter(a => a > 0);
+  if (options.dry) {
+    const description = 'Spawning "--process" child';
+    console.log(
+      `Skipping side effect (dry-run enabled): ${description}`
+    );
+    return;
+  }
   await Promise.all([
-    waitForLogFileUpdate(cursor, pids),
+    waitForLogFileUpdate(cursor, pids, ['process']),
     spawnBackgroundChild(exe, args, childCwd, options.sync),
   ]);
 }
-async function printPreviousLogs(count = 15, modes = ['process']) {
-  const logs = await getLastLogs(modes);
-  const list = logs.list.slice(Math.max(0, logs.list.length-count));
-  for (let i = 0; i < list.length; i++) {
-    const obj = list[i];
-    outputDatedLine(`[${obj.mode[0].toUpperCase()}]`, obj.time, obj.pid, obj.src, obj.text);
-  }
-  return list;
-}
-async function waitForLogFileUpdate(cursor = 0, pids = [], modes = ['process']) {
-  for (let cycle = 0; true; cycle++) {
-    const next = await getLastLogs(modes);
-    const list = next.list.filter(l => l.time > cursor);
-    if (list.length === 0) {
-      await sleep(250);
-      continue;
-    }
-    for (let i = 0; i < list.length; i++) {
-      const obj = list[i];
-      outputDatedLine(`[${obj.mode[0].toUpperCase()}]`, obj.time, obj.pid, obj.src, obj.text);
-    }
-    const newPid = list.map(a => a.pid).find(a => !pids.includes(a));
-    if (newPid) {
-      console.debug('New pid at logs:', newPid);
-      break;
-    }
-    await sleep(250);
-    continue;
-  }
-}
-
-
 

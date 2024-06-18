@@ -73,7 +73,10 @@ async function handleRequest(url, method, data) {
       routes: url !== '/api/status' ? ['/api/status', '/api/shutdown', '/api/stop', '/api/start', '/api/restart'] : undefined
     }
   }
-  if (url === '/api/shutdown' && terminating) {
+  if (url === '/api/shutdown' && method != 'POST' && !terminating) {
+    return { success: false, reason: "Invalid method (expected POST)" };
+  }
+  if (url === '/api/shutdown' && method === 'POST' && terminating) {
     return { success: true, reason: "Shutdown in process" };
   }
   if (terminating) {
@@ -129,11 +132,18 @@ async function handleRequest(url, method, data) {
 
 export async function initManager() {
   console.log("Starting manager...");
-  const result = await createInternalDataServer('Node Deployment Manager Server', handleRequest);
+  const host = process.env.INTERNAL_DATA_SERVER_HOST || '127.0.0.1';
+  const port = process.env.INTERNAL_DATA_SERVER_PORT || '49737';
+  
+  console.log(`Attempting to listen to http://${host}:${port}/`);
+  await sleep(300);
+  const result = await createInternalDataServer(host, port, handleRequest);
+  await sleep(300);
+  console.log(`Manager listening successfully at http://${host}:${port}/`);
   server = result.server;
-  console.log("Internal manager server listening on", result.url);
-  console.log("Writing pid file...");
+  console.log("Writing manager pid file...");
   await writePidFile('manager');
+  console.log(`Manager ready`);
 }
 
 async function killProcessByPid(pid) {

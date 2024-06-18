@@ -6,7 +6,6 @@ export async function spawnBackgroundChild(
   cwd = process.cwd(),
   detached = true
 ) {
-  
   return await new Promise((resolve, reject) => {
     console.log(
       "Starting",
@@ -15,6 +14,7 @@ export async function spawnBackgroundChild(
       cmd,
       args
     );
+    
     const child = child_process.spawn(cmd, args, {
       cwd,
       detached,

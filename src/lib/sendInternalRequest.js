@@ -1,3 +1,4 @@
+
 /**
  * @param {string} target
  * @param {string} type
@@ -6,14 +7,15 @@
 export default async function sendInternalRequest(target = 'manager', type = "", data = null) {
   const host = target === 'manager' ? process.env.INTERNAL_DATA_SERVER_HOST || '127.0.0.1' : '127.0.0.1';
   const port = target === 'manager' ? process.env.INTERNAL_DATA_SERVER_PORT || '49737': '49738';
-  const hostname = `${host}:${port}`;
+  const hostname = `http://${host}:${port}/`;
+  const url = `${hostname}api/${type}`;
   let stage = "start";
   let status = 0;
   let body = "";
   try {
     stage = "network";
-    const isPostOnlyType = ["shutdown", "login"].includes(type);
-    const response = await fetch(`http://${hostname}/api/${type}`, {
+    const isPostOnlyType = ["shutdown"].includes(type);
+    const response = await fetch(url, {
       method: data || isPostOnlyType ? "POST" : "GET",
       body: data && typeof data === "object" ? JSON.stringify(data) : isPostOnlyType ? '{}' : undefined,
       headers:
@@ -27,6 +29,20 @@ export default async function sendInternalRequest(target = 'manager', type = "",
     status = response.status;
     body = await response.text();
   } catch (err) {
+    if (type === 'shutdown' && stage === 'network') {
+      return {
+        success: true,
+        reason: "Server is already deactivated (not in execution)",
+        hostname,
+      };
+    }
+    if (status === 0 && body === '') {
+      return {
+        error: "Internal server request failed",
+        stage,
+        hostname,
+      };
+    }
     return {
       error: "Internal server request failed",
       stage,

@@ -9,5 +9,6 @@
     "removeComments": false,
     "allowSyntheticDefaultImports": true,
   },
-  "files": ["index.js"]
+  "files": ["index.js"],
+  "include": ["src"]
 }

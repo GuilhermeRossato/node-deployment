@@ -2,9 +2,16 @@ import http from "node:http";
 
 const stringify = (o) => JSON.stringify(o, null, "  ");
 
-export default function createInternalDataServer(host, port, handler) {
+/**
+ *
+ * @param {string} host
+ * @param {string | number} port
+ * @param {(url: string, method: string, obj: any) => Promise<any>} handler
+ * @returns {Promise<{url: string, server: http.Server}>}
+ */
+export default async function createInternalDataServer(host, port, handler) {
   const url = `http://${host}:${port}/`;
-  const server = new Promise((resolve, reject) => {
+  const server = await new Promise((resolve, reject) => {
     const server = http.createServer();
     server.on("error", reject);
     server.on("request", (req, res) => {
@@ -13,7 +20,7 @@ export default function createInternalDataServer(host, port, handler) {
       const url = req.url.substring(0, q === -1 ? req.url.length : q);
       const chunks = [];
       req.on("data", (data) => chunks.push(data));
-      req.on("end", () => {
+      req.on("end", async () => {
         try {
           let text = "";
           if (chunks.length && chunks[0]?.length) {
@@ -33,23 +40,23 @@ export default function createInternalDataServer(host, port, handler) {
               obj[key.toLowerCase()] = obj[key.toLowerCase()] || value;
             }
           }
-          handler(url, req.method, obj).then(
-            (data) => {
-              res.statusCode = !data || typeof data !== 'object' || data.error ? 500 : 200;
-              res.end(stringify(data));
-            },
-            (err) => {
-              res.statusCode = 500;
-              res.end(stringify({ error: err.message, stack: err.stack }));
-            },
-          );
+          const data = await handler(url, req.method, obj);
+          if (!data || typeof data !== "object") {
+            throw new Error(
+              `Request handler returned invalid data: ${JSON.stringify(data)}`
+            );
+          }
+          res.statusCode = data.error ? 500 : 200;
+          res.end(stringify(data));
         } catch (err) {
           res.statusCode = 500;
           res.end(stringify({ error: err.message, stack: err.stack }));
         }
       });
     });
-    server.listen(port, host, () => resolve(server));
+    server.listen(parseInt(port.toString()), host.toString(), () =>
+      resolve(server)
+    );
   });
   return {
     url,

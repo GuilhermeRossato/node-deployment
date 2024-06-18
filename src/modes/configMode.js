@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { executeWrappedSideEffect, setIsDryMode } from "../lib/executeWrappedSideEffect.js";
 import { executeCommandPredictably } from "../lib/executeCommandPredictably.js";
 import { checkPathStatus } from "../lib/checkPathStatus.js";
 
@@ -8,10 +9,8 @@ async function getRepositoryPathInteractively(options) {
   let origin = "?";
   let isNew = false;
   let res;
-  const check = checkPathStatus;
-
   if (options.dir) {
-    res = await check(options.dir);
+    res = await checkPathStatus(options.dir);
     if (res.type.bare) {
       console.debug(`Specified Git Bare Repository at "${res.path}"`);
       origin = "arg";
@@ -31,7 +30,7 @@ async function getRepositoryPathInteractively(options) {
       };
     }
     if (!res.exists) {
-      const parent = await check(res.parent);
+      const parent = await checkPathStatus(res.parent);
       // Find file name match
       if (parent.type.dir && parent.children instanceof Array) {
         const names = parent.children.filter(
@@ -45,7 +44,7 @@ async function getRepositoryPathInteractively(options) {
                 )
         );
         const checks = await Promise.all(
-          names.map((name) => check([parent.path, name]))
+          names.map((name) => checkPathStatus([parent.path, name]))
         );
         const match =
           checks.find((p) => p.type.bare) || checks.find((p) => p.type.dir);
@@ -94,9 +93,9 @@ async function getRepositoryPathInteractively(options) {
     !options.dir ||
     path.resolve(process.cwd()) !== path.resolve(options.dir)
   ) {
-    res = await check(process.cwd());
+    res = await checkPathStatus(process.cwd());
     if (res.type.bare) {
-      const conf = await confirm(
+      const conf = await intConfirm(
         `Select the Git Bare Repository at "${process.cwd()}"?`
       );
       if (conf) {
@@ -112,7 +111,7 @@ async function getRepositoryPathInteractively(options) {
     }
   }
   result = await intValid("Git Bare Repository Path", async (text) => {
-    const res = await check(text.trim());
+    const res = await checkPathStatus(text.trim());
     if (!res.parent) {
       console.log(
         `Specified path does not exist (Parent not found at "${path.dirname(
@@ -130,7 +129,7 @@ async function getRepositoryPathInteractively(options) {
       return res.path;
     }
     if (!res.exists) {
-      const parent = await check(res.parent);
+      const parent = await checkPathStatus(res.parent);
       // Find file name match
       if (parent.type.dir && parent.children instanceof Array) {
         const names = parent.children.filter(
@@ -144,7 +143,7 @@ async function getRepositoryPathInteractively(options) {
                 )
         );
         const checks = await Promise.all(
-          names.map((name) => check([parent.path, name]))
+          names.map((name) => checkPathStatus([parent.path, name]))
         );
         const match =
           checks.find((p) => p.type.bare) || checks.find((p) => p.type.dir);
@@ -203,18 +202,17 @@ async function getRepositoryPathInteractively(options) {
   };
 }
 
-
 async function initializeGitRepository(targetPath) {
   const status = await checkPathStatus(targetPath);
   if (!status.exists) {
-    await execSideEffect("create project dir", fs.promises.mkdir, targetPath, {
-      recursive: true,
+    await executeWrappedSideEffect("Create repository directory", async () => {
+      await fs.promises.mkdir(targetPath, { recursive: true, });
     });
   }
   if (!status.type.bare) {
-    await execSideEffect(
-      "git init --bare",
-      async (targetPath) => {
+    await executeWrappedSideEffect(
+      "Initialize repository (\"git init\")",
+      async () => {
         const result = await executeCommandPredictably(
           "git init --bare",
           targetPath,
@@ -232,8 +230,8 @@ async function initializeGitRepository(targetPath) {
   const updateFilePath = path.resolve(targetPath, "hooks", "post-update");
   const up = await checkPathStatus(updateFilePath);
   if (!up.exists) {
-    await execSideEffect(
-      "post-update hook creation",
+    await executeWrappedSideEffect(
+      "Create and enable post-update hook",
       async (updateFilePath) => {
         const lines = [
           "#!/bin/bash",
@@ -269,10 +267,10 @@ async function initializeGitRepository(targetPath) {
   );
   const dep = await checkPathStatus(deployFolderPath);
   if (!dep.exists) {
-    await execSideEffect("mkdir", fs.promises.mkdir, deployFolderPath, {
-      recursive: true,
+    await executeWrappedSideEffect("Create deployment folder", async () => {
+      await fs.promises.mkdir(deployFolderPath, { recursive: true, });
+      console.log('Created deployment folder at', deployFolderPath);
     });
-    console.log('Created deployment folder at', deployFolderPath);
   }
   const deployScriptPath = path.resolve(
     targetPath,
@@ -281,8 +279,8 @@ async function initializeGitRepository(targetPath) {
   );
   const scr = await checkPathStatus(deployScriptPath);
   if (!scr.exists) {
-    await execSideEffect(
-      "main script creation",
+    await executeWrappedSideEffect(
+      "Copy deployment script",
       async (file) => {
         const selfPath = path.resolve(path.dirname(path.resolve(process.cwd(), process.argv[1])), 'node-deploy.cjs');
         if (!fs.existsSync(selfPath)) {
@@ -302,26 +300,15 @@ async function initializeGitRepository(targetPath) {
   );
   const cfg = await checkPathStatus(envPath);
   if (!cfg.exists) {
-    await execSideEffect(
-      "config file creation",
+    await executeWrappedSideEffect(
+      "Create config file creation",
       async (envPath) => {
-        const lines = [
-          `GIT_BARE_REPO_PATH=${targetPath}`,
-          `LOG_FOLDER_PATH=${process.env.LOG_FOLDER_PATH || "logs"}`,
-          `DEPLOYMENT_FOLDER_PATH=${
-            process.env.DEPLOYMENT_FOLDER_PATH || "deployment"
-          }`,
-          `OLD_INSTANCE_FOLDER_PATH=${
-            process.env.OLD_INSTANCE_FOLDER_PATH || "old-inst"
-          }`,
-          `INSTANCE_FOLDER_PATH=${
-            process.env.INSTANCE_FOLDER_PATH || "instance"
-          }`,
-          `NEXT_INSTANCE_FOLDER_PATH=${
-            process.env.NEXT_INSTANCE_FOLDER_PATH || "next-inst"
-          }`,
-          `DEPLOYMENT_SETUP_DATE_TIME=${new Date().toISOString()}`,
-        ];
+        const vars = ['LOG_FOLDER_PATH','DEPLOYMENT_FOLDER_PATH','OLD_INSTANCE_FOLDER_PATH','PREV_INSTANCE_FOLDER_PATH','CURR_INSTANCE_FOLDER_PATH','NEXT_INSTANCE_FOLDER_PATH','PIPELINE_STEP_COPY','PIPELINE_STEP_INSTALL','PIPELINE_STEP_PREBUILD','PIPELINE_STEP_BUILD','PIPELINE_STEP_TEST','PIPELINE_STEP_START']
+        const lines = [];
+        for (const name of vars) {
+          lines.push(`${name}=${process.env[name]}`)
+        }
+        lines.push(`DEPLOYMENT_SETUP_DATE_TIME=${new Date().toISOString()}`);
         await fs.promises.writeFile(
           envPath,
           lines.join("\n") + "\n",
@@ -340,23 +327,11 @@ async function initializeGitRepository(targetPath) {
   );
 }
 
-let canExecSideEffect = true;
 let canSkipConfirm = false;
-async function execSideEffect(type, func, ...args) {
-  if (canExecSideEffect) {
-    return await func(...args);
-  } else {
-    console.log(
-      `Skipping disabled side effect [${type}] at ${JSON.stringify(args[0])}`
-    );
-  }
-}
-
 /**
  * @param {import("../getProgramArgs.js").Options} options
  */
 export async function initConfig(options) {
-  canExecSideEffect = !options.dry;
   canSkipConfirm = options.yes;
   const obj = await getRepositoryPathInteractively(options);
   const targetPath =

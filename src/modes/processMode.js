@@ -7,6 +7,7 @@ import sleep from "../lib/sleep.js";
 import { checkPathStatus } from "../lib/checkPathStatus.js";
 import { spawnManagerProcess } from "../lib/spawnManagerProcess.js";
 import { isProcessRunningByPid } from "../lib/isProcessRunningByPid.js";
+import { executeWrappedSideEffect } from "../lib/executeWrappedSideEffect.js";
 const debugProcess = true;
 
 async function waitForUniqueProcessor(deploymentPath, nextInstancePath) {
@@ -39,20 +40,48 @@ async function waitForUniqueProcessor(deploymentPath, nextInstancePath) {
   }
   p = await checkPathStatus(nextInstancePath);
   if (!p.exists) {
-    await fs.promises.mkdir(nextInstancePath, { recursive: true });
+    await executeWrappedSideEffect('Creating next instance path', async () => {
+      await fs.promises.mkdir(nextInstancePath, { recursive: true });
+    });
   }
-  await fs.promises.writeFile(processPidFile, process.pid.toString(), "utf-8");
-  await sleep(100 + Math.random() * 50);
-  const pid = await fs.promises.readFile(processPidFile, "utf-8");
-  if (process.pid.toString().trim() !== pid.trim()) {
-    throw new Error(`Failed to lock pid file at "${processPidFile}"`);
-  }
+  await executeWrappedSideEffect('Creating process pid file', async () => {
+    await fs.promises.writeFile(processPidFile, process.pid.toString(), "utf-8");
+    await sleep(100 + Math.random() * 50);
+    const pid = await fs.promises.readFile(processPidFile, "utf-8");
+    if (process.pid.toString().trim() !== pid.trim()) {
+      throw new Error(`Failed to lock pid file at "${processPidFile}"`);
+    }
+  });
 }
 
 /**
  * @param {import("../getProgramArgs.js").Options} options
  */
 export async function initProcessor(options) {
+  if (options.dry && (options.restart || options.start || options.shutdown)) {
+    const description = 'Operating on manager process from processor';
+    console.log(
+      `Skipping side effect (dry-run enabled): ${description}`
+    );
+  } else {
+    if (options.restart) {
+      const result = await sendInternalRequest("manager", "restart");
+      console.log(
+        "Restart response:",
+        result && result.error && result.stage === "network"
+          ? "(offline)"
+          : result
+      );
+    } else if (options.shutdown) {
+      const result = await sendInternalRequest("manager", "shutdown");
+      console.log(
+        "Shutdown response:",
+        result && result.error && result.stage === "network"
+          ? "(offline)"
+          : result
+      );
+    }
+  }
   const oldInstancePath = path.resolve(
     options.dir,
     process.env.OLD_INSTANCE_FOLDER_PATH
@@ -282,8 +311,8 @@ async function execCopy(
 ) {
   if (!(await checkPathStatus(repositoryPath)).exists) {
     console.log(
-      "Skipping copy because production does not exist at",
-      repositoryPath
+      "Skipping copy because instance folder was not found at",
+      JSON.stringify(repositoryPath)
     );
     return;
   }
@@ -443,12 +472,14 @@ async function execScript(nextInstancePath, cmd = "", timeout = 60_000) {
 }
 
 async function execReplaceProjectServer(debug, sync) {
-  let result = await sendInternalRequest("manager", "upgrade");
-  if (result.error && result.stage === 'network') {
-    console.log("Starting manager...");
-    await spawnManagerProcess(debug, sync);
-    result = await sendInternalRequest("manager", "upgrade");
-  }
-
-  console.log("Response", result);
+  await executeWrappedSideEffect('Send upgrade request to manager server', async () => {
+    let result = await sendInternalRequest("manager", "upgrade");
+    if (result.error && result.stage === "network") {
+      console.log("Starting manager...");
+      await spawnManagerProcess(debug, sync);
+      result = await sendInternalRequest("manager", "upgrade");
+    }
+  
+    console.log("Response", result);
+  });
 }

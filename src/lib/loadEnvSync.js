@@ -1,15 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 
-
-export function loadEnvSync(folderList = [],
-  envRecord = {}, whiteList = []) {
+export function loadEnvSync(folderList = [], envRecord = {}, whiteList = []) {
   if (folderList.length === 0) {
     folderList.push(process.cwd());
   }
   for (const folder of folderList) {
     try {
-      if (!folder || typeof folder !== 'string' || !fs.existsSync(folder)) {
+      if (!folder || typeof folder !== "string" || !fs.existsSync(folder)) {
         continue;
       }
       const target = fs.statSync(folder).isDirectory()
