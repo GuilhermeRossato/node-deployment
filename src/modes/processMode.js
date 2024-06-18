@@ -276,9 +276,16 @@ async function execInstall(isYarn = false) {
 async function execScript(script = "build", isYarn = false, timeout = 10_000) {
   const prefix = isYarn ? `yarn run` : "npm run";
   const pkgText = await asyncTryCatchNull(
-    fs.promises.readFile(path.resolve(newProductionFolder, "package.json"))
+    fs.promises.readFile(path.resolve(newProductionFolder, "package.json"), 'utf-8')
   );
   const pkg = typeof pkgText === "string" ? JSON.parse(pkgText) : null;
+  if (!pkg || !pkg.scripts) {
+    throw new Error(
+      `Could not find scripts at "package.json": ${JSON.stringify(
+        pkg
+      )}`
+    );
+  }
   const scriptRec = pkg ? pkg.scripts : null;
   if (!scriptRec || !scriptRec[script]) {
     throw new Error(
