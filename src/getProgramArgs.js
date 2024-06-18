@@ -161,9 +161,6 @@ export function getProgramArgs(args = process.argv.slice(2)) {
   if (!options.mode) {
     options.mode = "setup";
   }
-  if (!options.dir) {
-    options.dir = process.cwd();
-  }
   return {
     options,
     indexes,
