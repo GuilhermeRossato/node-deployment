@@ -1,23 +1,16 @@
-// @ts-check
-import path from "path";
-import { getLastLogs } from "../lib/streamLogs.js";
-import { spawnBackgroundChild } from "../lib/spawnBackgroundChild.js";
-import { outputDatedLine } from "../lib/outputDatedLine.js";
-import sleep from "../lib/sleep.js";
+import path from 'path';
+import { spawnBackgroundChild } from './spawnBackgroundChild.js';
+import { getLastLogs } from './streamLogs.js';
+import { outputDatedLine } from './outputDatedLine.js';
+import sendInternalRequest from './sendInternalRequest.js';
+import sleep from './sleep.js';
 
-/**
- * @param {import("../getProgramArgs.js").Options} options
- */
-export async function initScheduler(options) {
-  const debug = true;
-  
+export async function spawnManagerProcess(debug = false, detached = true) {
+  debug && console.log('Starting manager at background and waiting for log update...');
   const exe = process.argv[0];
   const script = process.argv[1];
-  const args = [script, "--process"];
-  if (options.ref) {
-    args.push(options.ref);
-  }
-  if (options.debug) {
+  const args = [script, "--manager"];
+  if (debug) {
     args.push('--debug');
   }
   const childCwd = process.cwd();
@@ -30,24 +23,37 @@ export async function initScheduler(options) {
   console.log("Child arg:", args);
   console.log("Child cwd:", childCwd);
 
-  debug &&
-    console.log(
-      "Starting processor at background and waiting for log update..."
-    );
   const list = await printPreviousLogs(15, ['process']);
   debug &&
     console.log(
-      `Processor has ${list.length} logs`
+      `Manager has ${list.length} starting logs`
     );
-  
   const cursor = list.length === 0 ? 0 : Math.min(...list.map(a => a.time).filter(a => a > 0));
   const pids = list.map(a => a.pid).filter(a => a > 0);
   await Promise.all([
     waitForLogFileUpdate(cursor, pids),
-    spawnBackgroundChild(exe, args, childCwd, options.sync),
+    spawnBackgroundChild(exe, args, childCwd, detached),
   ]);
+  let success = false;
+  for (let i = 0; i < 40; i++) {
+    await sleep(100);
+    try {
+      const response = await sendInternalRequest("manager", "status");
+      const text = await response.text();
+      if (response.ok && text.length) {
+        success = true;
+        break;
+      }
+    } catch (err) {
+      // ignore
+    }
+  }
+  if (!success) {
+    throw new Error('Failed to execute manager at background');
+  }
 }
-async function printPreviousLogs(count = 15, modes = ['process']) {
+
+async function printPreviousLogs(count = 15, modes = ['manager']) {
   const logs = await getLastLogs(modes);
   const list = logs.list.slice(Math.max(0, logs.list.length-count));
   for (let i = 0; i < list.length; i++) {
@@ -56,7 +62,7 @@ async function printPreviousLogs(count = 15, modes = ['process']) {
   }
   return list;
 }
-async function waitForLogFileUpdate(cursor = 0, pids = [], modes = ['process']) {
+async function waitForLogFileUpdate(cursor = 0, pids = [], modes = ['manager']) {
   for (let cycle = 0; true; cycle++) {
     const next = await getLastLogs(modes);
     const list = next.list.filter(l => l.time > cursor);
@@ -77,6 +83,3 @@ async function waitForLogFileUpdate(cursor = 0, pids = [], modes = ['process']) 
     continue;
   }
 }
-
-
-

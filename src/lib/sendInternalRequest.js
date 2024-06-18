@@ -4,8 +4,8 @@
  * @param {any} data
  */
 export default async function sendInternalRequest(target = 'manager', type = "", data = null) {
-  const host = target === 'manager' ? process.env.INTERNAL_DATA_SERVER_HOST : '';
-  const port = target === 'manager' ? process.env.INTERNAL_DATA_SERVER_PORT || '49737': '';
+  const host = target === 'manager' ? process.env.INTERNAL_DATA_SERVER_HOST || '127.0.0.1' : '127.0.0.1';
+  const port = target === 'manager' ? process.env.INTERNAL_DATA_SERVER_PORT || '49737': '49738';
   const hostname = `${host}:${port}`;
   let stage = "start";
   let status = 0;

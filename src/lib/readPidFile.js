@@ -1,6 +1,6 @@
 import fs from "fs";
 import asyncTryCatchNull from "./asyncTryCatchNull.js";
-import { isProcessRunningByPid } from "../manager/isProcessRunningByPid.js";
+import { isProcessRunningByPid } from "./isProcessRunningByPid.js";
 
 export async function readPidFile(mode) {
   const stat = await asyncTryCatchNull(fs.promises.stat(`${mode}.pid`));

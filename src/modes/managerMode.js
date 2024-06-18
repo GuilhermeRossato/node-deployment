@@ -4,7 +4,7 @@ import path from "path";
 import child_process from "child_process";
 import createInternalDataServer from "../lib/createInternalDataServer.js";
 import { readPidFile } from "../lib/readPidFile.js";
-import { isProcessRunningByPid } from "../manager/isProcessRunningByPid.js";
+import { isProcessRunningByPid } from "../lib/isProcessRunningByPid.js";
 import { executeCommandPredictably } from "../lib/executeCommandPredictably.js";
 import sleep from "../lib/sleep.js";
 import asyncTryCatchNull from "../lib/asyncTryCatchNull.js";

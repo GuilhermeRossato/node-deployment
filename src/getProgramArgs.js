@@ -10,6 +10,9 @@ import { initHelp } from "./modes/helpMode.js";
  * @property {boolean} yes - Indicates if "yes" option is enabled
  * @property {boolean} dry - Indicates if "dry" run mode is enabled
  * @property {boolean} sync - Indicates if "sync" run mode is enabled
+ * @property {boolean} start - Indicates if manager server should be started
+ * @property {boolean} restart - Indicates if manager server should be restarted
+ * @property {boolean} shutdown - Indicates if manager server should be shutdown
  * @property {string} mode - The program mode for the options
  * @property {string} ref - The version hash for deployment
  * @property {string} dir - The target project repository path
@@ -37,6 +40,9 @@ export function getProgramArgs(args = process.argv.slice(2)) {
     yes: false,
     dry: false,
     sync: false,
+    start: false,
+    restart: false,
+    shutdown: false,
     mode: "",
     ref: "",
     dir: "",
@@ -46,6 +52,9 @@ export function getProgramArgs(args = process.argv.slice(2)) {
     yes: -1,
     dry: -1,
     sync: -1,
+    start: -1,
+    restart: -1,
+    shutdown: -1,
     mode: -1,
     ref: -1,
     dir: -1,
@@ -91,6 +100,30 @@ export function getProgramArgs(args = process.argv.slice(2)) {
       options.dry = true;
       return;
     }
+    if (
+      indexes.start === -1 &&
+      ["-start", "-spawn", "-on"].includes(flag)
+    ) {
+      indexes.start = i;
+      options.start = true;
+      return;
+    }
+    if (
+      indexes.restart === -1 &&
+      ["-restart", "-reset", "-reload"].includes(flag)
+    ) {
+      indexes.restart = i;
+      options.restart = true;
+      return;
+    }
+    if (
+      indexes.shutdown === -1 &&
+      ["-shutdown", "-disable", "-off"].includes(flag)
+    ) {
+      indexes.shutdown = i;
+      options.shutdown = true;
+      return;
+    }
     if (indexes.mode === -1) {
       const names = Object.keys(programInitHandlers);
       if (flag === "-logs") {
@@ -127,6 +160,9 @@ export function getProgramArgs(args = process.argv.slice(2)) {
   });
   if (!options.mode) {
     options.mode = "setup";
+  }
+  if (!options.dir) {
+    options.dir = process.cwd();
   }
   return {
     options,

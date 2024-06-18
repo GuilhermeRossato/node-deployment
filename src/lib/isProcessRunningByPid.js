@@ -1,4 +1,4 @@
-import sleep from "../lib/sleep.js";
+import sleep from "./sleep.js";
 
 export async function isProcessRunningByPid(pid) {
   pid = parseInt(pid.toString().trim());
