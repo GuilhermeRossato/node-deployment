@@ -99,7 +99,6 @@ export function parseProgramArgs(
         "--dryrun",
         "--simulate",
         "--sim",
-        "--pretend",
       ].includes(arg)
     ) {
       indexes.dry = i;
@@ -157,7 +156,6 @@ export function parseProgramArgs(
         "--shutdown",
         "--disable",
         "--off",
-        ,
         "--deactivate",
         "-shutdown",
         "-disable",
@@ -174,11 +172,11 @@ export function parseProgramArgs(
     }
     if (
       indexes.ref === undefined &&
-      ["schedule", "process"].includes(options.mode || "") &&
+      ["schedule", "process", "upgrade"].includes(options.mode || "") &&
       i - 1 === indexes.mode
     ) {
       const argExists = fs.existsSync(path.resolve(options.dir || process.cwd(), arg));
-      if (!argExists) {
+      if (!argExists || options.mode === 'upgrade') {
         const isRefLike = arg.startsWith("refs/") || ([7, 8, 40].includes(arg.length) && /^[0-9a-fA-F]{40}$/.test(arg));
         if (!isRefLike) {
           console.log('Warning: Reference parameter has unexpected structure');

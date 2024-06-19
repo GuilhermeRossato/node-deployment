@@ -1,10 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import {
-  executeWrappedSideEffect,
-} from "../lib/executeWrappedSideEffect.js";
+import { executeWrappedSideEffect } from "../lib/executeWrappedSideEffect.js";
 import { executeCommandPredictably } from "../lib/executeCommandPredictably.js";
 import { checkPathStatus } from "../lib/checkPathStatus.js";
+import { downloadReleaseFile } from "./downloadReleaseFile.js";
+import getLastCommitHash from "./getLastCommitHash.js";
+import sendInternalRequest from "../lib/sendInternalRequest.js";
+import { spawnManagerProcess } from "../lib/spawnManagerProcess.js";
 
 function isFileFromBareRepo(f) {
   if (f.endsWith(".log") || f.endsWith(".pid")) {
@@ -290,7 +292,10 @@ async function getRepositoryPathInteractively(options) {
 }
 
 async function initializeGitRepository(targetPath) {
-  console.log('Initializing git repository named', JSON.stringify(path.basename(targetPath)));
+  console.log(
+    "Initializing git repository named",
+    JSON.stringify(path.basename(targetPath))
+  );
   const status = await checkPathStatus(targetPath);
   if (!status.exists) {
     await executeWrappedSideEffect("Create repository directory", async () => {
@@ -374,11 +379,19 @@ async function initializeGitRepository(targetPath) {
           path.dirname(path.resolve(process.cwd(), process.argv[1])),
           "node-deploy.cjs"
         );
-        if (!fs.existsSync(selfPath)) {
-          throw new Error(`Could not find self path at ${selfPath}`);
+        let buffer;
+        if (fs.existsSync(selfPath)) {
+          buffer = await fs.promises.readFile(selfPath);
+        } else {
+          const response = await downloadReleaseFile();
+          if (response) {
+            buffer = response.buffer;
+          }
         }
-        const text = await fs.promises.readFile(selfPath, "utf-8");
-        await fs.promises.writeFile(file, text, "utf-8");
+        if (!buffer) {
+          throw new Error(`Could not get self script at ${selfPath}`);
+        }
+        await fs.promises.writeFile(file, buffer);
         console.log("Copied deployment script to", file);
       },
       deployScriptPath
@@ -556,19 +569,20 @@ export async function initConfig(options) {
     }
     await initializeGitRepository(targetPath);
   }
-  const result = await executeCommandPredictably(
-    "git log -1",
-    targetPath,
-    2000
-  );
-  console.log(result);
-  if (result.exitCode === 0) {
-    // init
-  } else {
-    // nothing
+  const hash = await getLastCommitHash(targetPath);
+  if (typeof hash === "string") {
+    console.log("Verifying manager process after confirming commit");
+    const response = await sendInternalRequest("manager", "status");
+    const offline = response.error && response.stage === "network";
+    if (offline) {
+      console.log("Starting manager process as it is offline");
+      await spawnManagerProcess(options.debug, options.sync);
+    } else {
+      console.log("Manager process response:", response);
+    }
   }
+  intPause();
 }
-
 function intPause() {
   if (!global["intResolve"]) {
     return;
