@@ -27,7 +27,7 @@ attachToConsole(
 );
 
 let valid = true;
-if (["schedule", "process", "manager"].includes(parsed.options.mode)) {
+if (["status", "logs", "schedule", "process", "manager"].includes(parsed.options.mode)) {
   valid = false;
   let info = checkPathStatusSync(parsed.options.dir || process.cwd());
   // Enter .git if it exists and deployment folder doesnt
@@ -40,7 +40,28 @@ if (["schedule", "process", "manager"].includes(parsed.options.mode)) {
   ) {
     const next = checkPathStatusSync([info.path, ".git"]);
     if (next.type.dir && next.children.includes("config") && next.children.includes("hooks")) {
+      parsed.options.debug && console.log('Updating path to enter ".git" folder');
       info = next;
+      parsed.options.dir = info.path;
+    }
+  }
+  // Exit deployment folder if inside
+  if (
+    info.type.dir &&
+    info.name === deployName &&
+    info.children.includes("node-deploy.cjs") &&
+    !info.children.includes("hooks") &&
+    !info.children.includes("refs")
+  ) {
+    const par = checkPathStatusSync(info.parent);
+    if (
+      par.type.dir &&
+      par.children.includes("hooks") &&
+      par.children.includes("refs") &&
+      par.children.includes("config")
+    ) {
+      parsed.options.debug && console.log('Updating path to exit "deployment" folder');
+      info = par;
       parsed.options.dir = info.path;
     }
   }
@@ -62,12 +83,14 @@ if (["schedule", "process", "manager"].includes(parsed.options.mode)) {
   }
   if (!cfg.type.file) {
     console.log(`Cannot initialize mode because the config file was not found: ${JSON.stringify(".env")}`);
+    valid = false;
   }
-  if (valid && info.type.dir && path.resolve(info.path) !== path.resolve(process.cwd())) {
+  if (parsed.options.dir !== info.path) {
+    parsed.options.debug && console.log("Current project path is", parsed.options.dir);
     parsed.options.dir = info.path;
-    parsed.options.debug && console.log("Target repository path updated:", JSON.stringify(info.path));
-    process.chdir(path.resolve(info.path));
+    parsed.options.debug && console.log("Updated project path is", info.path);
   }
+  process.chdir(path.resolve(info.path));
 }
 
 if (!valid) {

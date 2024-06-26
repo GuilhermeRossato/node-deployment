@@ -29,7 +29,7 @@ export async function initStatus(options) {
   if (options.shutdown || options.restart) {
     console.log("Spawning manager process...");
     await executeWrappedSideEffect("Spawn manager server", async () => {
-      await spawnManagerProcess(options.debug, options.sync);
+      await spawnManagerProcess(options.debug, !options.sync);
     });
   }
   let read = {
@@ -47,7 +47,7 @@ export async function initStatus(options) {
     if (deploy.type.dir) {
       read = await readPidFile("manager");
     } else {
-      console.log('Warning: The repository deployment folder was not found at this project');
+      console.log("Warning: The repository deployment folder was not found at this project");
     }
   }
   if (read.running) {
@@ -58,6 +58,9 @@ export async function initStatus(options) {
     } else if (response.error) {
       console.log("Failed to request from the internal manager process server:");
       console.log(options.debug ? response : response.error);
+    } else {
+      console.log("Successfull status response:");
+      console.log(response);
     }
   } else {
     console.log("The manager process is not currently in execution");
@@ -84,7 +87,7 @@ export async function initStatus(options) {
     await sleep(500);
     console.log("Loading latest manager process logs...");
 
-    const logs = await getLastLogs(['mana']);
+    const logs = await getLastLogs(["mana"]);
     const list = logs.list.filter((f) => ["mana"].includes(path.basename(f.file).substring(0, 4)));
     if (list.length === 0) {
       console.log("Could not find any manager log entry to display");

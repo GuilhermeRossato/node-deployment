@@ -33,7 +33,7 @@ export async function executeGitProcessPredictably(cmd, repoPath = "") {
         !par.children.includes("hooks")
       )
     ) {
-      console.log(`Raising from repository "${status.name}" to parent "${path.basename(status.parent)}"`);
+      // console.log(`Raising from repository "${status.name}" to parent "${path.basename(status.parent)}"`);
       status = par;
     }
   }
@@ -53,7 +53,7 @@ export async function executeGitProcessPredictably(cmd, repoPath = "") {
   ) {
     const parent = await checkPathStatus(status.parent);
     if (parent.type.dir && parent.children.includes(".git")) {
-      console.log(`Raising from repository "${status.name}" to parent "${path.basename(status.parent)}"`);
+      // console.log(`Raising from repository "${status.name}" to parent "${path.basename(status.parent)}"`);
       status = parent;
     }
   }
@@ -79,16 +79,20 @@ export async function executeGitProcessPredictably(cmd, repoPath = "") {
   } else {
     repoPath = status.path;
   }
-  console.log("Executing git command at", JSON.stringify(repoPath));
+  // console.log("Executing git command at", JSON.stringify(repoPath));
   const result = await executeProcessPredictably(cmd.trim(), repoPath, {
     timeout: 3000,
     throws: true,
     shell: true,
   });
-  if (result.exit !== 0 || typeof result.output !== "string") {
-    throw new Error(
-      `Unexpected git exit (code ${result.exit}): ${result.error ? result.error.message : "Unspecified error"}`
-    );
+  if (result.exit !== 0) {
+    throw new Error(`Unexpected git exit (code ${result.exit}): ${JSON.stringify(result)}`);
+  }
+  if (typeof result.output !== "string" && !result.output) {
+    result.output = '';
+  }
+  if (typeof result.output !== "string") {
+    throw new Error(`Unexpected git output (exit code ${result.exit}): ${JSON.stringify(result)}`);
   }
   return result;
 }

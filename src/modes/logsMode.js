@@ -35,15 +35,10 @@ export async function initLogs(options) {
   }
   if (options.debug) {
     console.log("");
-    console.log(
-      "Current :",
-      getDateTimeString(new Date().getTime()),
-      `(${getIntervalString(new Date().getTime() - new Date().getTime())} ago)`
-    );
-    console.log("Last log:", getDateTimeString(cursor), `(${getIntervalString(new Date().getTime() - cursor)} ago)`);
-    console.log("");
+    console.log("Current  :", getDateTimeString(new Date().getTime()), `(${last.names.length} log files)`);
+    console.log("Last log :", getDateTimeString(cursor), `(${getIntervalString(new Date().getTime() - cursor)} ago)`);
     if (list.length) {
-      console.log("Last update:", list[list.length - 1].file, getDateTimeString(list[list.length - 1].time));
+      console.log("Last file:", list[list.length - 1].file, "at pid", list[list.length - 1].pid);
       console.log("");
     }
     await sleep(1000);

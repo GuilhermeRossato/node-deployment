@@ -1,12 +1,11 @@
-
 /**
  * @param {string} target
  * @param {string} type
  * @param {any} data
  */
-export default async function sendInternalRequest(target = 'manager', type = "", data = null) {
-  const host = target === 'manager' ? process.env.INTERNAL_DATA_SERVER_HOST || '127.0.0.1' : '127.0.0.1';
-  const port = target === 'manager' ? process.env.INTERNAL_DATA_SERVER_PORT || '49737': '49738';
+export default async function sendInternalRequest(target = "manager", type = "", data = null) {
+  const host = target === "manager" ? process.env.INTERNAL_DATA_SERVER_HOST || "127.0.0.1" : "127.0.0.1";
+  const port = target === "manager" ? process.env.INTERNAL_DATA_SERVER_PORT || "49737" : "49738";
   const hostname = `http://${host}:${port}/`;
   const url = `${hostname}api/${type}`;
   let stage = "start";
@@ -14,10 +13,10 @@ export default async function sendInternalRequest(target = 'manager', type = "",
   let body = "";
   try {
     stage = "network";
-    const isPostOnlyType = ["shutdown"].includes(type);
+    const isPostOnlyType = ["shutdown", "terminate", "stop"].includes(type);
     const response = await fetch(url, {
       method: data || isPostOnlyType ? "POST" : "GET",
-      body: data && typeof data === "object" ? JSON.stringify(data) : isPostOnlyType ? '{}' : undefined,
+      body: data && typeof data === "object" ? JSON.stringify(data) : isPostOnlyType ? "{}" : undefined,
       headers:
         data && typeof data === "object"
           ? {
@@ -29,14 +28,14 @@ export default async function sendInternalRequest(target = 'manager', type = "",
     status = response.status;
     body = await response.text();
   } catch (err) {
-    if (type === 'shutdown' && stage === 'network') {
+    if (type === "shutdown" && stage === "network") {
       return {
         success: true,
         reason: "Server is not executing (no connection)",
         hostname,
       };
     }
-    if (status === 0 && body === '') {
+    if (status === 0 && body === "") {
       return {
         error: "Internal server request failed",
         stage,

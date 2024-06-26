@@ -11,8 +11,7 @@ import { getIntervalString } from "../utils/getIntervalString.js";
 import { isProcessRunningByPid } from "./isProcessRunningByPid.js";
 
 export async function spawnManagerProcess(debug = false, detached = true) {
-  const logs = await getLastLogs(['mana']);
-  const pids = new Set();
+  const logs = await getLastLogs(["mana"]);
   const list = logs.list.filter((f) => ["mana"].includes(path.basename(f.file).substring(0, 4)));
   console.log(`Spawning manager script for ${JSON.stringify(logs.projectPath)}`, debug ? "in debug mode" : "");
 
@@ -31,9 +30,8 @@ export async function spawnManagerProcess(debug = false, detached = true) {
     await sleep(200);
     process.stdout.write("\n");
     await sleep(200);
-    for (i=i; i < list.length; i++) {
+    for (i = i; i < list.length; i++) {
       const obj = list[i];
-      pids.add(obj.pid);
       outputLogEntry(obj.file.substring(obj.file.length - 20).padStart(20), obj);
     }
     process.stdout.write("\n");
@@ -45,7 +43,7 @@ export async function spawnManagerProcess(debug = false, detached = true) {
     await sleep(200);
     const runs = await isProcessRunningByPid(last.pid);
     if (runs) {
-      console.log("This log was written by a process currently in execution at pid", last.pid);
+      console.log("The process is executing at pid", last.pid);
     }
   } else {
     console.log("There are no manager log files");
@@ -70,17 +68,26 @@ export async function spawnManagerProcess(debug = false, detached = true) {
   });
   await Promise.all([exec, wait]);
   await sleep(200);
+  process.stdout.write("\n");
+  console.log("Verifying if manager process started by requesting status");
   let success = false;
-  for (let i = 0; i < 40; i++) {
-    await sleep(100);
+  for (let i = 0; i < 30 && !success; i++) {
+    await sleep(200);
     try {
       const response = await sendInternalRequest("manager", "status");
-      if (response.ok && !response.error) {
+      if (response?.error && typeof response.error === "string") {
+        throw new Error(response.error);
+      }
+      if (response?.error) {
+        throw new Error(`Failed to get status: ${JSON.stringify(response)}`);
+      }
+      if ((response.ok || response.success) && !response.error) {
         success = true;
         break;
       }
-      if (response?.error && typeof response.error === "string") {
-        throw new Error(response.error);
+      if (i === 10) {
+        console.log("Status check", i, "response:");
+        console.log(response);
       }
     } catch (err) {
       if (i === 0) {
@@ -99,7 +106,7 @@ export async function spawnManagerProcess(debug = false, detached = true) {
     }
   }
   if (!success) {
-    throw new Error("Failed during manager script start: no status response after spawn");
+    throw new Error("Failed during manager script start as status was not received");
   }
 }
 

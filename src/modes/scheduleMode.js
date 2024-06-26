@@ -17,7 +17,6 @@ import { isProcessRunningByPid } from "../process/isProcessRunningByPid.js";
 export async function initScheduler(options) {
   const debug = options.debug;
   const logs = await getLastLogs();
-  const pids = new Set();
   const list = logs.list.filter((f) => ["proc"].includes(path.basename(f.file).substring(0, 4)));
   console.log(`Scheduling script started for ${JSON.stringify(logs.projectPath)}`, debug ? "in debug mode" : "");
 
@@ -25,20 +24,19 @@ export async function initScheduler(options) {
   const last = list[list.length - 1];
   if (last) {
     cursor = last.time;
-    let i = Math.max(0, list.length - (debug ? 10 : 2));
     console.log(
       `Latest log file "${path.basename(last.file)}" was updated ${getIntervalString(
         new Date().getTime() - last.time
       )} ago (at ${getDateTimeString(last.time)})`
     );
     await sleep(200);
+    let i = Math.max(0, list.length - (debug ? 10 : 2));
     process.stdout.write(`  Displaying ${list.length - i} logs:\n`);
     await sleep(200);
     process.stdout.write("\n");
     await sleep(200);
-    for (i; i < list.length; i++) {
+    for (i = i; i < list.length; i++) {
       const obj = list[i];
-      pids.add(obj.pid);
       outputLogEntry(obj.file.substring(obj.file.length - 20).padStart(20), obj);
     }
     process.stdout.write("\n");
@@ -50,7 +48,7 @@ export async function initScheduler(options) {
     await sleep(200);
     const runs = await isProcessRunningByPid(last.pid);
     if (runs) {
-      console.log("This log was written by a process currently in execution at pid", last.pid);
+      console.log("The process is executing at pid", last.pid);
     }
   } else {
     console.log("There are no processor log files");
@@ -78,7 +76,7 @@ export async function initScheduler(options) {
     return await spawnChildScript(program, args, cwd, options.sync);
   });
   const wait = executeWrappedSideEffect('Waiting for "processor" logs', async () => {
-    return await waitForLogFileUpdate(cursor, [...pids], ["proc"]);
+    return await waitForLogFileUpdate(cursor, [], ["proc"]);
   });
   await Promise.all([exec, wait]);
   console.log("Schedule mode finished");

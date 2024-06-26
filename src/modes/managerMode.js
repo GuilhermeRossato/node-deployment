@@ -14,7 +14,8 @@ import { getLogFileStatus } from "../logs/readLogFile.js";
 import { getLastLogs } from "../logs/getLastLogs.js";
 import getDateTimeString from "../utils/getDateTimeString.js";
 import { getIntervalString } from "../utils/getIntervalString.js";
-import { getRepoCommitData, executeGitCheckout } from "../lib/getRepoCommitData.js";
+import { getRepoCommitData } from "../lib/getRepoCommitData.js";
+import { executeProcessPredictably } from "../process/executeProcessPredictably.js";
 let instancePath = "";
 let terminating = false;
 let stopping = false;
@@ -25,16 +26,22 @@ let server = null;
  * @type {import("../lib/getProgramArgs.js").InitModeMethod}
  */
 export async function initManager(options) {
-  console.log("Starting manager...");
   const host = process.env.INTERNAL_DATA_SERVER_HOST || "127.0.0.1";
   const port = process.env.INTERNAL_DATA_SERVER_PORT || "49737";
 
   console.log(`Creating internal server at http://${host}:${port}/...`);
   await sleep(300);
-  const result = await createInternalServer(host, port, handleRequest);
+  try {
+    const result = await createInternalServer(host, port, handleRequest);
+    server = result.server;
+  } catch (err) {
+    console.log(`Failed while creating internal server at http://${host}:${port}/`);
+    console.log(err);
+    await sleep(300);
+    process.exit(1);
+  }
   await sleep(300);
   console.log(`Manager process is successfully listening at http://${host}:${port}/`);
-  server = result.server;
   console.log("Writing manager pid file...");
   const expected = process.pid.toString().trim();
   await writePidFile("manager", expected);
@@ -63,6 +70,7 @@ export async function initManager(options) {
   const data = await getRepoCommitData(options.dir);
   if (data?.hash) {
     try {
+      console.log("Starting instance child at commit", data.hash);
       const result = await startInstanceChild(data.hash);
       console.log("Start instance child result:");
       console.log(result);
@@ -85,26 +93,12 @@ async function startInstanceChild(hash = "") {
   );
   let status = await checkPathStatus(currInstancePath);
   if (!status.type.dir) {
-    console.log(`Creating instance folder at "${status.path}"`);
-    await fs.promises.mkdir(status.path, { recursive: true });
-    status = await checkPathStatus(currInstancePath);
-  }
-  if (!status.type.dir) {
-    throw new Error(`Invalid instance folder: "${status.path}"`);
+    throw new Error(
+      `Failed to start instance because instance folder does not exist at ${JSON.stringify(status.path)}`
+    );
   }
   if (!status.children.length) {
-    console.log(`Executing checkout from "${root}"...`);
-    const result = await executeGitCheckout(root, currInstancePath, hash || options.ref);
-    if (result.error || result.exit !== 0) {
-      throw new Error(
-        `Failed to checkout to instance folder: ${JSON.stringify({
-          result,
-        })}`
-      );
-    } else {
-      console.log("Checkout successfull");
-    }
-    status = await checkPathStatus(currInstancePath);
+    throw new Error(`Failed to start instance because instance folder is empty at ${JSON.stringify(status.path)}`);
   }
   let main = "";
   let pkg = {};
@@ -238,7 +232,7 @@ async function handleRequest(url, method, data) {
   if (url !== "/" && url.endsWith("/")) {
     url = url.substring(0, url.length - 1);
   }
-  console.log("Handling", method, "request", url);
+  console.log("Handling", method, url);
   if (url === "/" || url === "/api" || url === "/api/help" || url === "/api/info") {
     return {
       name: "Node Deployment Manager Server",
@@ -315,23 +309,59 @@ async function handleRequest(url, method, data) {
         return { success: false, reason: `Failed at termination: ${err.message}`, stack: err.stack };
       }
     }
+    if (data.nextInstancePath) {
+      const next = await checkPathStatus(data.nextInstancePath);
+      console.log("New instance version requested at", JSON.stringify(path.basename(data.nextInstancePath)));
+      let currInstancePath = data.currInstancePath || instancePath;
+      if (!currInstancePath) {
+        const { options } = getParsedProgramArgs();
+        currInstancePath = path.resolve(options.dir, process.env.CURR_INSTANCE_FOLDER_PATH || "current-instance");
+      }
+      if (next.type.dir) {
+        const curr = await checkPathStatus(currInstancePath);
+        if (curr.type.dir) {
+          const bkpInstancePath = `${curr.path}-bkp`;
+          console.log("Moving current instance files to", bkpInstancePath);
+          const result = await executeProcessPredictably(
+            `mv -rf "${curr.path}" "${bkpInstancePath}"`,
+            path.dirname(curr.path),
+            { timeout: 10_000 }
+          );
+          console.log(result);
+        }
+        if (next.type.dir) {
+          console.log("Moving next instance files to", curr.path);
+          const result = await executeProcessPredictably(
+            `mv -rf "${next.path}" "${curr.path}"`,
+            path.dirname(curr.path),
+            { timeout: 10_000 }
+          );
+          console.log(result);
+          console.log("Successfully replaced current instance folder with next instance folder");
+        }
+      } else {
+        console.log("The new instance path was not found at", JSON.stringify(next.path));
+      }
+    }
     console.log("Spawning instance process...");
-    const childResult = await startInstanceChild();
-    console.log("Child spawn result", childResult);
-    await sleep(500);
+    const promise = startInstanceChild();
+    promise
+      .then((r) => {
+        console.log("Child spawn result", r);
+      })
+      .catch((e) => {
+        console.log("Child spawn error", e);
+      });
+    await sleep(1000);
+    const logs = await getLastLogs(["instance"]);
     const pres = await getRunningChildInstanceProcess();
     const runs = pres.pid ? await isProcessRunningByPid(pres.pid) : false;
     console.log("Verifying instance pid from", pres.source, ":", pres.pid, runs ? "(running)" : "(not running)");
-    if (!runs) {
-      return { error: "Failed to start instance server" };
-    }
     return {
-      success: true,
+      success: runs,
       reason: "Started instance folder",
-      logs: "/api/logs",
       pid: pres.pid,
-      cwd: childResult.cwd,
-      cmd: childResult.cmd,
+      logs: logs.list,
     };
   }
   if (url === "/api/logs") {

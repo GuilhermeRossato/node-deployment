@@ -17,16 +17,9 @@ export async function getRepoCommitData(repositoryPath, ref) {
   }
   return result;
 }
-export async function executeGitCheckout(repositoryPath, targetPath, ref='') {
+export async function executeGitCheckout(repositoryPath, targetPath, ref = "") {
   const cmd = `git --work-tree="${targetPath}" checkout -f${ref ? ` ${ref}` : ""}`;
   const result = await executeGitProcessPredictably(cmd, repositoryPath);
-  const text = result.output ? result.output.toString().trim() : '';
-  console.log(`text`, text);
-  if (!result || result instanceof Error) {
-    return {
-      error: result instanceof Error ? result : new Error("Could not get commit data"),
-    };
-  }
   return result;
 }
 
