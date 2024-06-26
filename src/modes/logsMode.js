@@ -1,30 +1,84 @@
-
-import sleep from "../lib/sleep.js";
-import { outputDatedLine } from "../lib/outputDatedLine.js";
-import { printPreviousLogs } from "../lib/printPreviousLogs.js";
-import { getLastLogs } from "../lib/getLastLogs.js";
-
-export async function initLogs() {
-  const list = await printPreviousLogs(-30, []);
-  const cursor = list.length === 0 ? 0 : Math.min(...list.map(a => a.mode === 'logs' ? 0 : a.time).filter(a => a > 0));
-  console.log('Logs:');
-  await sleep(500);
-  await streamStatusLogs(cursor, true, ["setup", "schedule", "process", "manager"]);
+import sleep from "../utils/sleep.js";
+import { outputDatedLine, outputLogEntry } from "../logs/outputDatedLine.js";
+import { getLastLogs } from "../logs/getLastLogs.js";
+import getDateTimeString from "../utils/getDateTimeString.js";
+import { getIntervalString } from "../utils/getIntervalString.js";
+/**
+ * @type {import("../lib/getProgramArgs.js").InitModeMethod}
+ */
+export async function initLogs(options) {
+  await sleep(200);
+  process.stdout.write("\n");
+  await sleep(200);
+  const last = await getLastLogs();
+  process.stdout.write(` Displaying logs from ${last.names.length} files of ${JSON.stringify(last.projectPath)}`);
+  process.stdout.write("\n");
+  const header = "     log-file          yyyy-mm-dd hh:mm:ss        source - pid - text...      ";
+  process.stdout.write(`${"-".repeat(header.length)}\n`);
+  process.stdout.write(`${header}\n`);
+  process.stdout.write(`${"-".repeat(header.length)}\n`);
+  await sleep(200);
+  if (last.names.length === 0) {
+    console.log("Could not find any log file");
+  }
+  const list = last.list;
+  await sleep(200);
+  process.stdout.write("\n");
+  await sleep(200);
+  let cursor = 0;
+  if (list[list.length - 50]) {
+    cursor = list[list.length - 50].time;
+  }
+  for (let i = 0; i < list.length; i++) {
+    const obj = list[i];
+    cursor = outputLogEntry(obj.file.substring(obj.file.length - 20).padStart(20), obj);
+  }
+  if (options.debug) {
+    console.log("");
+    console.log(
+      "Current :",
+      getDateTimeString(new Date().getTime()),
+      `(${getIntervalString(new Date().getTime() - new Date().getTime())} ago)`
+    );
+    console.log("Last log:", getDateTimeString(cursor), `(${getIntervalString(new Date().getTime() - cursor)} ago)`);
+    console.log("");
+    if (list.length) {
+      console.log("Last update:", list[list.length - 1].file, getDateTimeString(list[list.length - 1].time));
+      console.log("");
+    }
+    await sleep(1000);
+  }
+  process.stdout.write("\n");
+  await sleep(200);
+  console.log(" Watching Logs:");
+  await sleep(200);
+  process.stdout.write("\n");
+  await sleep(200);
+  await streamStatusLogs(cursor, true);
 }
 
-export async function streamStatusLogs(cursor = 0, continuous = true, modes = ["schedule", "process", "manager", "setup"]) {
+export async function streamStatusLogs(cursor = 0, continuous = true) {
+  let lastPrint = new Date().getTime();
   for (let cycle = 0; true; cycle++) {
-    await sleep(200);
-    const all = await getLastLogs(modes);
-    const list = all.list.filter(l => l.time > cursor);
+    await sleep(300);
+    const all = await getLastLogs();
+    const list = all.list.filter((l) => l.time > cursor);
+    if (list.length === 0) {
+      await sleep(300);
+      if (lastPrint && new Date().getTime() - lastPrint > 30_000) {
+        process.stdout.write(`  (Still no updates since ${getDateTimeString(cursor)})\n`);
+        lastPrint = 0;
+      }
+    } else {
+      lastPrint = new Date().getTime();
+    }
     for (let i = 0; i < list.length; i++) {
       const obj = list[i];
-      if (obj.mode === 'status') {
+      if (obj.file.endsWith("logs.log")) {
         continue;
       }
-      outputDatedLine(`[${obj.mode[0].toUpperCase()}]`, obj.time, obj.pid, obj.src, obj.text);
-      await sleep(10);
-      cursor = obj.time;
+      cursor = outputLogEntry(obj.file.substring(obj.file.length - 16).padStart(16), obj);
+      await sleep(15);
     }
     if (!continuous) {
       break;

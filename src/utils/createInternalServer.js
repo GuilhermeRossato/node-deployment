@@ -1,15 +1,12 @@
 import http from "node:http";
 
-const stringify = (o) => JSON.stringify(o, null, "  ");
-
 /**
- *
  * @param {string} host
  * @param {string | number} port
  * @param {(url: string, method: string, obj: any) => Promise<any>} handler
  * @returns {Promise<{url: string, server: http.Server}>}
  */
-export default async function createInternalDataServer(host, port, handler) {
+export default async function createInternalServer(host, port, handler) {
   const url = `http://${host}:${port}/`;
   const server = await new Promise((resolve, reject) => {
     const server = http.createServer();
@@ -42,21 +39,17 @@ export default async function createInternalDataServer(host, port, handler) {
           }
           const data = await handler(url, req.method, obj);
           if (!data || typeof data !== "object") {
-            throw new Error(
-              `Request handler returned invalid data: ${JSON.stringify(data)}`
-            );
+            throw new Error(`Request handler returned invalid data: ${JSON.stringify(data)}`);
           }
-          res.statusCode = data.error ? 500 : 200;
-          res.end(stringify(data));
+          res.statusCode = data.status || (data.error ? 500 : 200);
+          res.end(JSON.stringify(data, null, "  "));
         } catch (err) {
           res.statusCode = 500;
-          res.end(stringify({ error: err.message, stack: err.stack }));
+          res.end(JSON.stringify({ error: err.message, stack: err.stack }, null, "  "));
         }
       });
     });
-    server.listen(parseInt(port.toString()), host.toString(), () =>
-      resolve(server)
-    );
+    server.listen(parseInt(port.toString()), host.toString(), () => resolve(server));
   });
   return {
     url,

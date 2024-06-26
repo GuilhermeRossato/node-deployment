@@ -10,9 +10,7 @@ export function loadEnvSync(folderList = [], envRecord = {}, whiteList = []) {
       if (!folder || typeof folder !== "string" || !fs.existsSync(folder)) {
         continue;
       }
-      const target = fs.statSync(folder).isDirectory()
-        ? path.resolve(folder, ".env")
-        : folder;
+      const target = fs.statSync(folder).isDirectory() ? path.resolve(folder, ".env") : folder;
       const text = fs.readFileSync(target, "utf-8");
       const list = text.split("\n").reverse();
       for (const line of list) {
@@ -30,9 +28,7 @@ export function loadEnvSync(folderList = [], envRecord = {}, whiteList = []) {
         const value = i === -1 ? "" : line.substring(i + 1);
         if (!envRecord[key] && value) {
           envRecord[key] =
-            value.startsWith('"') && value.endsWith('"')
-              ? value.substring(1, value.length - 1)
-              : value.trim();
+            value.startsWith('"') && value.endsWith('"') ? value.substring(1, value.length - 1) : value.trim();
         }
       }
     } catch (err) {

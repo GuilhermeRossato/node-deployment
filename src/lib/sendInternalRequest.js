@@ -32,7 +32,7 @@ export default async function sendInternalRequest(target = 'manager', type = "",
     if (type === 'shutdown' && stage === 'network') {
       return {
         success: true,
-        reason: "Server is already deactivated (not in execution)",
+        reason: "Server is not executing (no connection)",
         hostname,
       };
     }

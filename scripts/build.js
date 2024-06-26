@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import attachToConsole, { configLog } from "../src/lib/attachToConsole.js";
+import attachToConsole, { configLog } from "../src/logs/attachToConsole.js";
 
 const addLogToFunctionStart = false;
 
@@ -18,9 +18,7 @@ const addLogToFunctionStart = false;
  * @returns {InputFileState}
  */
 function createState(filePath = "index.js", sourceCode = "", lists = {}) {
-  ["imports", "exports", "declared", "undeclared"].map(
-    (a) => (lists[a] = lists[a] || [])
-  );
+  ["imports", "exports", "declared", "undeclared"].map((a) => (lists[a] = lists[a] || []));
   sourceCode = sourceCode.trim().replace(/\r/g, "");
   return { filePath, sourceCode, lists };
 }
@@ -34,17 +32,13 @@ attachToConsole("log", null);
 
 async function init() {
   const root = await guessRootProjectPath();
-  const jsconfigText = await fs.promises.readFile(
-    path.resolve(root, "jsconfig.json"),
-    "utf-8"
-  );
+  const jsconfigText = await fs.promises.readFile(path.resolve(root, "jsconfig.json"), "utf-8");
   /** @type {ProcessedInputUnit[]} */
   const workload = [];
   try {
     const i = jsconfigText.indexOf('"files": [');
     const j = jsconfigText.indexOf("]", i);
-    const fileTexts =
-      i !== -1 && j !== -1 ? jsconfigText.substring(i + 10, j) : "";
+    const fileTexts = i !== -1 && j !== -1 ? jsconfigText.substring(i + 10, j) : "";
     const files = JSON.parse("[" + fileTexts + "]");
     for (const file of files) {
       const filePath = path.resolve(root, file).replace(/\\/g, "/");
@@ -93,15 +87,12 @@ async function init() {
       if (imp.isModule) {
         continue;
       }
-      if (
-        imp.isFile &&
-        imp.expression.startsWith('require(".') &&
-        imp.expression.endsWith('.js")')
-      ) {
+      if (imp.isFile && imp.expression.startsWith('require(".') && imp.expression.endsWith('.js")')) {
         const arg = imp.expression.substring(9, imp.expression.length - 2);
-        const filePath = path
-          .resolve(path.dirname(u.state.filePath), arg)
-          .replace(/\\/g, "/");
+        const filePath = path.resolve(path.dirname(u.state.filePath), arg).replace(/\\/g, "/");
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`File "${path.basename(u.state.filePath)}" is importing "${filePath}" which was not found`);
+        }
         const stat = await fs.promises.stat(filePath);
         u.after.push(filePath);
         workload.push({
@@ -125,11 +116,7 @@ async function init() {
   }
   const filtered = uniques.filter((a) => a.fileName !== "asleep.js");
   const text = await joinProcessedInputFiles(filtered);
-  await fs.promises.writeFile(
-    path.resolve(root, "node-deploy.cjs"),
-    text,
-    "utf-8"
-  );
+  await fs.promises.writeFile(path.resolve(root, "node-deploy.cjs"), text, "utf-8");
   if (process.argv.includes("--watch")) {
     console.log("Started watching", filtered.length, "source files for updates");
     while (true) {
@@ -139,9 +126,7 @@ async function init() {
       for (i = 0; i < updated.length && !found; i++) {
         try {
           const s = await fs.promises.stat(updated[i].filePath);
-          found =
-            s.mtimeMs !== updated[i].stat.mtimeMs ||
-            s.size !== updated[i].stat.size;
+          found = s.mtimeMs !== updated[i].stat.mtimeMs || s.size !== updated[i].stat.size;
         } catch (err) {
           found = true;
         }
@@ -171,43 +156,30 @@ async function joinProcessedInputFiles(workload) {
       }
       let ind = unit.state.sourceCode.indexOf(imp.commonjsLine);
       if (ind === -1) {
-        ind = unit.state.sourceCode.indexOf(
-          imp.commonjsLine.replace("const ", "global.")
-        );
+        ind = unit.state.sourceCode.indexOf(imp.commonjsLine.replace("const ", "global."));
       }
       if (ind === -1) {
-        throw new Error(
-          `${unit.name} imports "${imp.varName}" but it was not found at source`
-        );
+        throw new Error(`${unit.name} imports "${imp.varName}" but it was not found at source`);
       }
       const next = unit.state.sourceCode.indexOf("\n", ind + 2);
       unit.state.sourceCode =
         unit.state.sourceCode.substring(0, ind) +
-        unit.state.sourceCode.substring(
-          next === -1 ? unit.state.sourceCode.length : next
-        );
+        unit.state.sourceCode.substring(next === -1 ? unit.state.sourceCode.length : next);
     }
   }
   parts = parts.sort((a, b) => a.length - b.length);
   // Flatten exports
   for (const unit of workload) {
     for (const exp of unit.state.lists.exports) {
-      const linePrefix = exp.commonjsLine.substring(
-        0,
-        exp.commonjsLine.indexOf(" = ") + 3
-      );
+      const linePrefix = exp.commonjsLine.substring(0, exp.commonjsLine.indexOf(" = ") + 3);
       let ind = unit.state.sourceCode.indexOf(linePrefix);
       if (ind === -1) {
-        throw new Error(
-          `${unit.name} exports "${exp.varName}" but it was not found at source`
-        );
+        throw new Error(`${unit.name} exports "${exp.varName}" but it was not found at source`);
       }
       const next = ind + linePrefix.length;
       unit.state.sourceCode =
         unit.state.sourceCode.substring(0, ind) +
-        unit.state.sourceCode.substring(
-          next === -1 ? unit.state.sourceCode.length : next
-        );
+        unit.state.sourceCode.substring(next === -1 ? unit.state.sourceCode.length : next);
     }
   }
   // Remove requires
@@ -220,22 +192,21 @@ async function joinProcessedInputFiles(workload) {
       const linePrefix = imp.commonjsLine.substring(0, imp.commonjsLine.length);
       let ind = unit.state.sourceCode.indexOf(linePrefix);
       if (ind === -1) {
-        throw new Error(
-          `${unit.name} exports "${exp.varName}" but it was not found at source`
-        );
+        throw new Error(`${unit.name} exports "${exp.varName}" but it was not found at source`);
       }
-      const next =
-        ind +
-        linePrefix.length +
-        (unit.state.sourceCode[ind + linePrefix.length] === ";" ? 1 : 0);
+      const next = ind + linePrefix.length + (unit.state.sourceCode[ind + linePrefix.length] === ";" ? 1 : 0);
       unit.state.sourceCode =
         unit.state.sourceCode.substring(0, ind) +
-        unit.state.sourceCode.substring(
-          next === -1 ? unit.state.sourceCode.length : next
-        );
+        unit.state.sourceCode.substring(next === -1 ? unit.state.sourceCode.length : next);
     }
   }
   const sorted = workload.sort((a, b) => {
+    if (a.name.endsWith("/index.js") && !b.name.endsWith("/index.js")) {
+      return 1;
+    }
+    if (!a.name.endsWith("/index.js") && b.name.endsWith("/index.js")) {
+      return -1;
+    }
     if (a.after.find((c) => c === b.filePath)) {
       return 1;
     }
@@ -257,6 +228,7 @@ async function joinProcessedInputFiles(workload) {
   for (const unit of sorted) {
     parts.push("// " + unit.name + "");
     parts.push(unit.state.sourceCode.trim());
+    console.log("Processed", unit.name);
   }
   const text = parts.join("\n");
   // console.log(`text`, text);
@@ -268,10 +240,11 @@ async function guessRootProjectPath() {
   for (const option of [
     ".",
     "..",
-    "./node-project-deployment-manager",
-    "./node-project-deployment-manager-master",
-    "./node-deployment-manager-master",
+    "./node-deploy",
+    "./node-deployment",
     "./node-deployment-master",
+    "./node-deployment-manager",
+    "./node-deployment-manager-master",
   ]) {
     const dir = path.resolve(option);
     let files = [];
@@ -308,26 +281,17 @@ function convertAssignsToGlobal(state) {
     }
     const varName = part.substring(start + 1, objSep);
     const endExp = part.indexOf(";", objSep + 3);
-    const expression = part.substring(
-      objSep + 3,
-      endExp === -1 ? part.length : endExp
-    );
+    const expression = part.substring(objSep + 3, endExp === -1 ? part.length : endExp);
 
-    const imp = state.lists.imports.find(
-      (e) => e.expression.replace(";", "") === expression.replace(";", "")
-    );
+    const imp = state.lists.imports.find((e) => e.expression.replace(";", "") === expression.replace(";", ""));
     if (imp) {
       continue;
     }
     const moduleLine = `const ${varName} = ${expression}`;
     const commonjsLine = `global.${varName} = ${expression}`;
     const callIndexStart = part.indexOf("(", objSep);
-    const callIndexEnd =
-      callIndexStart === -1 ? -1 : part[endExp - 1] === ")" ? endExp - 1 : -1;
-    const callArg =
-      callIndexEnd !== -1
-        ? part.substring(callIndexStart + 1, callIndexEnd)
-        : "";
+    const callIndexEnd = callIndexStart === -1 ? -1 : part[endExp - 1] === ")" ? endExp - 1 : -1;
+    const callArg = callIndexEnd !== -1 ? part.substring(callIndexStart + 1, callIndexEnd) : "";
     state.lists.declared.push({
       varName,
       expression,
@@ -397,24 +361,16 @@ function convertExportToCommonJS(state) {
       const subject = part.substring(isDefault ? 8 : 0, nl);
 
       const moduleLine = `export ${subject}`;
-      const isFunction =
-        subject.startsWith("async function ") ||
-        subject.startsWith("function ");
+      const isFunction = subject.startsWith("async function ") || subject.startsWith("function ");
       if (!isFunction) {
-        throw new Error(
-          `Only function exports are allowed, got invalid export at: ${JSON.stringify(
-            state.filePath
-          )}`
-        );
+        throw new Error(`Only function exports are allowed, got invalid export at: ${JSON.stringify(state.filePath)}`);
       }
       const funcIndex = subject.indexOf("function ");
       const openIndex = subject.indexOf("(");
       const closeIndex = subject.indexOf(")", openIndex);
       const varName = subject.substring(funcIndex + 9, openIndex).trim();
       if (varName.includes(" ")) {
-        state.lists.problems.push(
-          `Invalid expression "${varName}" at line "${moduleLine}"`
-        );
+        state.lists.problems.push(`Invalid expression "${varName}" at line "${moduleLine}"`);
       }
       const prefix = `exports${isDefault ? " = " : `.${varName} = `}`;
       const middle = subject.substring(0, nl);

@@ -7,7 +7,7 @@
     "outFile": "./node-deploy.cjs",
     "noImplicitAny": false,
     "removeComments": false,
-    "allowSyntheticDefaultImports": true,
+    "allowSyntheticDefaultImports": true
   },
   "files": ["index.js"],
   "include": ["src"]

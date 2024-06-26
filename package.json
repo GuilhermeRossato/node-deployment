@@ -3,9 +3,10 @@
   "type": "module",
   "version": "1.0.0",
   "description": "Program to process CI/CD of Node.js projects executing deployment steps on update (continuous integration) and server process restart when new versions are available (continuous delivery).",
-  "main": "./src/index.js",
+  "main": "./index.js",
   "scripts": {
-    "start": "node scripts/build.js && node node-deploy.cjs",
+    "start": "node ./index.js --help",
+    "build-start": "node scripts/build.js && node node-deploy.cjs",
     "dev": "node scripts/build.js --watch && node node-deploy.cjs",
     "direct": "node index.js",
     "build": "node scripts/build.js"
@@ -25,6 +26,6 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^20.14.2"
+    "@types/node": "20.14.2"
   }
 }

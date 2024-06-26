@@ -1,17 +1,19 @@
-import { getCachedParsedProgramArgs } from "../getProgramArgs.js";
+import { getParsedProgramArgs } from "./getProgramArgs.js";
 
 let canExecSideEffect = null;
 
-export async function executeWrappedSideEffect(description, func, ...args) {
+export function canExecuteSideEffects() {
   if (canExecSideEffect === null) {
-    const { options } = getCachedParsedProgramArgs();
+    const { options } = getParsedProgramArgs();
     canExecSideEffect = options.dry ? false : true;
   }
-  if (canExecSideEffect === false) {
-    console.log(
-      `Skipping side effect (dry-run enabled): ${description}`
-    );
-    return;
+  return canExecSideEffect;
+}
+
+export async function executeWrappedSideEffect(description, func, ...args) {
+  if (!canExecuteSideEffects()) {
+    console.log(`Skipping side effect (dry-run enabled): ${description}`);
+    return false;
   }
   return await func(...args);
 }

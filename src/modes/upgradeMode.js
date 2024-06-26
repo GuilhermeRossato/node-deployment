@@ -1,24 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
-import { checkPathStatus } from "../lib/checkPathStatus.js";
-import { downloadReleaseFile } from "./downloadReleaseFile.js";
+import { checkPathStatus } from "../utils/checkPathStatus.js";
+import fetchProjectReleaseFileSource from "../lib/fetchProjectReleaseFileSource.js";
 
+/**
+ * @type {import("../lib/getProgramArgs.js").InitModeMethod}
+ */
 export async function initUpgrade(options) {
-  const release = await downloadReleaseFile();
+  const release = await fetchProjectReleaseFileSource();
   const buffer = release?.buffer;
-  const info = await checkPathStatus(
-    path.resolve(process.cwd(), options.dir || process.argv[1])
-  );
+  const info = await checkPathStatus(path.resolve(process.cwd(), options.dir || process.argv[1]));
   if (info.type.file) {
     const stat = await fs.promises.stat(info.path);
-    if (
-      info.name !== "node-deploy.cjs" &&
-      stat.size !== 0 &&
-      (stat.size < 40000 || stat.size > 120000)
-    ) {
-      throw new Error(
-        `Specified file path does not look like a source file at ${info.path}`
-      );
+    if (info.name !== "node-deploy.cjs" && stat.size !== 0 && (stat.size < 40000 || stat.size > 120000)) {
+      throw new Error(`Specified file path does not look like a source file at ${info.path}`);
     }
     return await performUpgrade(info.path, buffer);
   }
@@ -53,7 +48,7 @@ export async function initUpgrade(options) {
       .map((p) => p.file)
       .pop();
     if (!target) {
-      target = 'node-deploy.cjs';
+      target = "node-deploy.cjs";
     }
     return await performUpgrade(target, buffer);
   }

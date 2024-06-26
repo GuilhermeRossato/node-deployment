@@ -1,137 +1,47 @@
 import fs from "fs";
 import path from "path";
 import sendInternalRequest from "../lib/sendInternalRequest.js";
-import { executeCommandPredictably } from "../lib/executeCommandPredictably.js";
-import asyncTryCatchNull from "../lib/asyncTryCatchNull.js";
-import sleep from "../lib/sleep.js";
-import { checkPathStatus } from "../lib/checkPathStatus.js";
-import { spawnManagerProcess } from "../lib/spawnManagerProcess.js";
-import { isProcessRunningByPid } from "../lib/isProcessRunningByPid.js";
+import asyncTryCatchNull from "../utils/asyncTryCatchNull.js";
+import sleep from "../utils/sleep.js";
+import { checkPathStatus } from "../utils/checkPathStatus.js";
+import { spawnManagerProcess } from "../process/spawnManagerProcess.js";
+import { isProcessRunningByPid } from "../process/isProcessRunningByPid.js";
 import { executeWrappedSideEffect } from "../lib/executeWrappedSideEffect.js";
+import { executeProcessPredictably } from "../process/executeProcessPredictably.js";
 const debugProcess = true;
 
-async function waitForUniqueProcessor(deploymentPath, nextInstancePath) {
-  const processPidFile = path.resolve(deploymentPath, "process.pid");
-  const waitStart = new Date().getTime();
-  let p;
-  while (true) {
-    p = await checkPathStatus(processPidFile);
-    if (!p.exists) {
-      break;
-    }
-    const pid = await fs.promises.readFile(processPidFile);
-    if (!(await isProcessRunningByPid(pid))) {
-      break;
-    }
-    if (new Date().getTime() - waitStart < 30_000) {
-      throw new Error(
-        `Timeout while waiting for processor with pid ${pid} to finish`
-      );
-    }
-    await sleep(500);
-  }
-  p = await checkPathStatus(nextInstancePath);
-  if (p.exists) {
-    await sleep(100 + Math.random() * 100);
-  }
-  p = await checkPathStatus(processPidFile);
-  if (p.exists) {
-    throw new Error(`Failed to lock pid file at "${processPidFile}"`);
-  }
-  p = await checkPathStatus(nextInstancePath);
-  if (!p.exists) {
-    await executeWrappedSideEffect('Creating next instance path', async () => {
-      await fs.promises.mkdir(nextInstancePath, { recursive: true });
-    });
-  }
-  await executeWrappedSideEffect('Creating process pid file', async () => {
-    await fs.promises.writeFile(processPidFile, process.pid.toString(), "utf-8");
-    await sleep(100 + Math.random() * 50);
-    const pid = await fs.promises.readFile(processPidFile, "utf-8");
-    if (process.pid.toString().trim() !== pid.trim()) {
-      throw new Error(`Failed to lock pid file at "${processPidFile}"`);
-    }
-  });
-}
-
 /**
- * @param {import("../getProgramArgs.js").Options} options
+ * @type {import("../lib/getProgramArgs.js").InitModeMethod}
  */
 export async function initProcessor(options) {
   if (options.dry && (options.restart || options.start || options.shutdown)) {
-    const description = 'Operating on manager process from processor';
-    console.log(
-      `Skipping side effect (dry-run enabled): ${description}`
-    );
+    const description = "Operating on manager process from processor";
+    console.log(`Skipping side effect (dry-run enabled): ${description}`);
   } else {
     if (options.restart) {
       const result = await sendInternalRequest("manager", "restart");
-      console.log(
-        "Restart response:",
-        result && result.error && result.stage === "network"
-          ? "(offline)"
-          : result
-      );
+      console.log("Restart response:", result && result.error && result.stage === "network" ? "(offline)" : result);
     } else if (options.shutdown) {
       const result = await sendInternalRequest("manager", "shutdown");
-      console.log(
-        "Shutdown response:",
-        result && result.error && result.stage === "network"
-          ? "(offline)"
-          : result
-      );
+      console.log("Shutdown response:", result && result.error && result.stage === "network" ? "(offline)" : result);
     }
   }
-  const oldInstancePath = path.resolve(
-    options.dir,
-    process.env.OLD_INSTANCE_FOLDER_PATH
-  );
-  const prevInstancePath = path.resolve(
-    options.dir,
-    process.env.PREV_INSTANCE_FOLDER_PATH
-  );
-  const currInstancePath = path.resolve(
-    options.dir,
-    process.env.CURR_INSTANCE_FOLDER_PATH
-  );
-  const nextInstancePath = path.resolve(
-    options.dir,
-    process.env.NEXT_INSTANCE_FOLDER_PATH
-  );
-  const deploymentPath = path.resolve(
-    options.dir,
-    process.env.DEPLOYMENT_FOLDER_NAME
-  );
+  const oldInstancePath = path.resolve(options.dir, process.env.OLD_INSTANCE_FOLDER_PATH);
+  const prevInstancePath = path.resolve(options.dir, process.env.PREV_INSTANCE_FOLDER_PATH);
+  const currInstancePath = path.resolve(options.dir, process.env.CURR_INSTANCE_FOLDER_PATH);
+  const nextInstancePath = path.resolve(options.dir, process.env.NEXT_INSTANCE_FOLDER_PATH);
+  const deploymentPath = path.resolve(options.dir, process.env.DEPLOYMENT_FOLDER_NAME);
   await waitForUniqueProcessor(deploymentPath, nextInstancePath);
-  const execPurgeRes = await execPurge(
-    oldInstancePath,
-    prevInstancePath,
-    currInstancePath,
-    nextInstancePath
-  );
+  const execPurgeRes = await execPurge(oldInstancePath, prevInstancePath, currInstancePath, nextInstancePath);
   console.log(`execPurgeRes`, execPurgeRes);
-  const execCheckoutRes = await execCheckout(
-    options.dir,
-    nextInstancePath,
-    options.ref
-  );
+  const execCheckoutRes = await execCheckout(options.dir, nextInstancePath, options.ref);
   console.log(`execCheckoutRes`, execCheckoutRes);
 
-  const filesToCopy = (
-    process.env.PIPELINE_STEP_COPY ?? "data,.env,node_modules,build"
-  ).split(",");
-  const execCopyRes = await execCopy(
-    options.dir,
-    nextInstancePath,
-    filesToCopy
-  );
+  const filesToCopy = (process.env.PIPELINE_STEP_COPY ?? "data,.env,node_modules,build").split(",");
+  const execCopyRes = await execCopy(options.dir, nextInstancePath, filesToCopy);
   console.log(`execCopyRes`, execCopyRes);
   if (process.env.PIPELINE_STEP_INSTALL) {
-    const execInstakk = await execInstall(
-      options.dir,
-      nextInstancePath,
-      process.env.PIPELINE_STEP_INSTALL
-    );
+    const execInstakk = await execInstall(options.dir, nextInstancePath, process.env.PIPELINE_STEP_INSTALL);
     console.log(`execInstakk`, execInstakk);
   }
   for (const cmd of [
@@ -154,12 +64,51 @@ export async function initProcessor(options) {
   console.log(`Processor finished`);
 }
 
-async function execPurge(
-  oldInstancePath,
-  prevInstancePath,
-  currInstancePath,
-  nextInstancePath
-) {
+async function waitForUniqueProcessor(deploymentPath, nextInstancePath) {
+  const processPidFile = path.resolve(deploymentPath, "process.pid");
+  const waitStart = new Date().getTime();
+  let p;
+  while (true) {
+    p = await checkPathStatus(processPidFile);
+    if (!p.type.file) {
+      break;
+    }
+    const pid = await fs.promises.readFile(processPidFile);
+    const running = await isProcessRunningByPid(pid);
+    if (!running) {
+      await fs.promises.unlink(processPidFile);
+      break;
+    }
+    if (new Date().getTime() - waitStart < 30_000) {
+      throw new Error(`Timeout while waiting for processor with pid ${pid} to finish`);
+    }
+    await sleep(500);
+  }
+  p = await checkPathStatus(nextInstancePath);
+  if (p.type.file) {
+    await sleep(100 + Math.random() * 100);
+  }
+  p = await checkPathStatus(processPidFile);
+  if (p.type.file) {
+    throw new Error(`Failed to lock pid file at "${processPidFile}"`);
+  }
+  p = await checkPathStatus(nextInstancePath);
+  if (!p.type.file) {
+    await executeWrappedSideEffect("Creating next instance path", async () => {
+      await fs.promises.mkdir(nextInstancePath, { recursive: true });
+    });
+  }
+  await executeWrappedSideEffect("Creating process pid file", async () => {
+    await fs.promises.writeFile(processPidFile, process.pid.toString(), "utf-8");
+    await sleep(100 + Math.random() * 50);
+    const pid = await fs.promises.readFile(processPidFile, "utf-8");
+    if (process.pid.toString().trim() !== pid.trim()) {
+      throw new Error(`Failed to lock pid file at "${processPidFile}"`);
+    }
+  });
+}
+
+async function execPurge(oldInstancePath, prevInstancePath, currInstancePath, nextInstancePath) {
   debugProcess &&
     console.log("Executing purge", {
       prevInstancePath,
@@ -172,33 +121,29 @@ async function execPurge(
   const next = (await checkPathStatus(nextInstancePath)).type.dir;
 
   if (old && prev) {
-    debugProcess &&
-      console.log("Removing old instance path", { oldInstancePath });
-    const result = await executeCommandPredictably(
-      `rm -rf "${oldInstancePath}"`,
-      path.dirname(oldInstancePath),
-      10_000
-    );
+    debugProcess && console.log("Removing old instance path", { oldInstancePath });
+    const result = await executeProcessPredictably(`rm -rf "${oldInstancePath}"`, path.dirname(oldInstancePath), {
+      timeout: 10_000,
+    });
     console.log(result);
   }
 
   if (prev) {
-    debugProcess &&
-      console.log("Moving previous instance path", { prevInstancePath });
-    const result = await executeCommandPredictably(
+    debugProcess && console.log("Moving previous instance path", { prevInstancePath });
+    const result = await executeProcessPredictably(
       `mv -rf "${prevInstancePath}" "${oldInstancePath}"`,
       path.dirname(prevInstancePath),
-      10_000
+      { timeout: 10_000 }
     );
     console.log(result);
   }
 
   if (curr) {
     debugProcess && console.log("Copying instance path", { currInstancePath });
-    const result = await executeCommandPredictably(
+    const result = await executeProcessPredictably(
       `cp -rf "${currInstancePath}" "${prevInstancePath}"`,
       path.dirname(currInstancePath),
-      10_000
+      { timeout: 10_000 }
     );
     console.log(result);
   }
@@ -206,24 +151,17 @@ async function execPurge(
   if (next) {
     return;
   }
-  debugProcess &&
-    console.log("Removing new production folder", { nextInstancePath });
+  debugProcess && console.log("Removing new production folder", { nextInstancePath });
   // Remove new production folder
-  const result = await executeCommandPredictably(
-    `rm -rf "${nextInstancePath}"`,
-    path.dirname(nextInstancePath),
-    10_000
-  );
+  const result = await executeProcessPredictably(`rm -rf "${nextInstancePath}"`, path.dirname(nextInstancePath), {
+    timeout: 10_000,
+  });
   debugProcess && console.log("Removal of new production folder:", result);
 
-  const newProdStat = await asyncTryCatchNull(
-    fs.promises.stat(nextInstancePath)
-  );
-  if (result.error || result.exitCode !== 0) {
+  const newProdStat = await asyncTryCatchNull(fs.promises.stat(nextInstancePath));
+  if (result.error || result.exit !== 0) {
     if (newProdStat) {
-      const list = await asyncTryCatchNull(
-        fs.promises.readdir(nextInstancePath)
-      );
+      const list = await asyncTryCatchNull(fs.promises.readdir(nextInstancePath));
       if (!(list instanceof Array) || list.length !== 0) {
         throw new Error(
           `Failed to remove new production folder: ${JSON.stringify({
@@ -231,16 +169,10 @@ async function execPurge(
           })}`
         );
       } else {
-        debugProcess &&
-          console.log(
-            "Removal of new production folder failed but it is empty"
-          );
+        debugProcess && console.log("Removal of new production folder failed but it is empty");
       }
     } else {
-      debugProcess &&
-        console.log(
-          "Removal of new production folder failed but it does not exist"
-        );
+      debugProcess && console.log("Removal of new production folder failed but it does not exist");
     }
   }
   // Check
@@ -254,9 +186,7 @@ async function execPurge(
     if (!(list instanceof Array) || list.length === 0) {
       continue;
     }
-    throw new Error(
-      "Purge failed because there are files at next instance path after cleanup"
-    );
+    throw new Error("Purge failed because there are files at next instance path after cleanup");
   }
   return true;
 }
@@ -267,12 +197,10 @@ async function execCheckout(repositoryPath, nextInstancePath, ref) {
     const stat = await asyncTryCatchNull(fs.promises.stat(nextInstancePath));
     if (!stat) {
       // Create new production folder
-      const result = await executeCommandPredictably(
-        `mkdir "${nextInstancePath}"`,
-        path.dirname(nextInstancePath),
-        10_000
-      );
-      if (result.error || result.exitCode !== 0) {
+      const result = await executeProcessPredictably(`mkdir "${nextInstancePath}"`, path.dirname(nextInstancePath), {
+        timeout: 10_000,
+      });
+      if (result.error || result.exit !== 0) {
         throw new Error(
           `Failed to create new production folder: ${JSON.stringify({
             result,
@@ -282,19 +210,14 @@ async function execCheckout(repositoryPath, nextInstancePath, ref) {
     }
   }
   {
-    const refStr =
-      ref && ref.startsWith("refs")
-        ? ` --branch ${ref}`
-        : ref && ref.length > 6
-        ? ` --detach ${ref}`
-        : "";
+    const refStr = ref && ref.startsWith("refs") ? ` --branch ${ref}` : ref && ref.length > 6 ? ` --detach ${ref}` : "";
     // Checkout
-    const result = await executeCommandPredictably(
-      `git --work-tree="${repositoryPath}" checkout -f${refStr}`,
-      nextInstancePath,
-      10_000
+    const result = await executeProcessPredictably(
+      `git --work-tree="${nextInstancePath}" checkout -f`,
+      repositoryPath,
+      { timeout: 10_000 }
     );
-    if (result.error || result.exitCode !== 0) {
+    if (result.error || result.exit !== 0) {
       throw new Error(
         `Failed to checkout to new production folder: ${JSON.stringify({
           result,
@@ -304,16 +227,9 @@ async function execCheckout(repositoryPath, nextInstancePath, ref) {
   }
 }
 
-async function execCopy(
-  repositoryPath,
-  nextInstancePath,
-  files = ["data", ".env", "node_modules", "build"]
-) {
-  if (!(await checkPathStatus(repositoryPath)).exists) {
-    console.log(
-      "Skipping copy because instance folder was not found at",
-      JSON.stringify(repositoryPath)
-    );
+async function execCopy(repositoryPath, nextInstancePath, files = ["data", ".env", "node_modules", "build"]) {
+  if (!(await checkPathStatus(repositoryPath)).type.dir) {
+    console.log("Skipping copy because instance folder was not found at", JSON.stringify(repositoryPath));
     return;
   }
   console.log("Executing copy");
@@ -333,22 +249,16 @@ async function execCopy(
     const t = await asyncTryCatchNull(fs.promises.stat(target));
     if (s.isFile() && t) {
       console.log("Removing existing target before coping:", file);
-      const result = await executeCommandPredictably(
-        `rm -rf "${target}"`,
-        path.dirname(nextInstancePath),
-        10_000
-      );
-      if (result.error || result.exitCode !== 0) {
-        throw new Error(
-          `Failed to remove existing copy target: ${JSON.stringify({ result })}`
-        );
+      const result = await executeProcessPredictably(`rm -rf "${target}"`, path.dirname(nextInstancePath), {
+        timeout: 10_000,
+      });
+      if (result.error || result.exit !== 0) {
+        throw new Error(`Failed to remove existing copy target: ${JSON.stringify({ result })}`);
       }
     }
-    const result = await executeCommandPredictably(
-      `cp -r "${source}" "${target}"`,
-      repositoryPath,
-      10_000
-    );
+    const result = await executeProcessPredictably(`cp -r "${source}" "${target}"`, repositoryPath, {
+      timeout: 10_000,
+    });
     console.log({ result });
   }
 }
@@ -363,12 +273,8 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
   ];
   for (let i = 0; i < files.length; i++) {
     const fileName = files[i].name;
-    files[i].source = await asyncTryCatchNull(
-      fs.promises.readFile(path.resolve(repositoryPath, fileName))
-    );
-    files[i].target = await asyncTryCatchNull(
-      fs.promises.readFile(path.resolve(nextInstancePath, fileName))
-    );
+    files[i].source = await asyncTryCatchNull(fs.promises.readFile(path.resolve(repositoryPath, fileName)));
+    files[i].target = await asyncTryCatchNull(fs.promises.readFile(path.resolve(nextInstancePath, fileName)));
   }
   debugProcess &&
     console.log(
@@ -382,32 +288,15 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
     );
   const [pkg, pklock, yarnlock, nodemodules] = files;
   if (!pkg.target) {
-    debugProcess &&
-      console.log('Install skipped because "package.json" was not found');
+    debugProcess && console.log('Install skipped because "package.json" was not found');
     return;
   }
-  if (
-    pkg.source === pkg.target &&
-    pklock.source &&
-    pklock.target &&
-    pklock.source === pklock.target
-  ) {
-    debugProcess &&
-      console.log(
-        'Install skipped because both "package.json" and "package-lock.json" matched'
-      );
+  if (pkg.source === pkg.target && pklock.source && pklock.target && pklock.source === pklock.target) {
+    debugProcess && console.log('Install skipped because both "package.json" and "package-lock.json" matched');
     return;
   }
-  if (
-    pkg.origin === pkg.target &&
-    yarnlock.origin &&
-    yarnlock.target &&
-    yarnlock.origin === yarnlock.target
-  ) {
-    debugProcess &&
-      console.log(
-        'Install skipped because both "package.json" and "yarn.lock" matched'
-      );
+  if (pkg.origin === pkg.target && yarnlock.origin && yarnlock.target && yarnlock.origin === yarnlock.target) {
+    debugProcess && console.log('Install skipped because both "package.json" and "yarn.lock" matched');
     return;
   }
   if (cmd === "npm") {
@@ -416,17 +305,17 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
     cmd = `${cmd} ${yarnlock.target ? "--frozen-lockfile" : ""}`;
   }
   debugProcess && console.log("Install command:", cmd);
-  const result = await executeCommandPredictably(cmd, nextInstancePath, 10_000);
-  if (result.error || result.exitCode !== 0) {
+  const result = await executeProcessPredictably(cmd, nextInstancePath, {
+    timeout: 10_000,
+  });
+  if (result.error || result.exit !== 0) {
     throw new Error(
       `Failed to install dependencies with "${cmd}": ${JSON.stringify({
         result,
       })}`
     );
   }
-  const stat = await asyncTryCatchNull(
-    fs.promises.readFile(path.resolve(nextInstancePath, "node_modules"))
-  );
+  const stat = await asyncTryCatchNull(fs.promises.readFile(path.resolve(nextInstancePath, "node_modules")));
   debugProcess &&
     console.log(
       "Installation finished",
@@ -440,27 +329,20 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
 
 async function execScript(nextInstancePath, cmd = "", timeout = 60_000) {
   const pkgText = await asyncTryCatchNull(
-    fs.promises.readFile(
-      path.resolve(nextInstancePath, "package.json"),
-      "utf-8"
-    )
+    fs.promises.readFile(path.resolve(nextInstancePath, "package.json"), "utf-8")
   );
   if (cmd.startsWith("npm run")) {
     const pkg = typeof pkgText === "string" ? JSON.parse(pkgText) : null;
     if (!pkg || !pkg.scripts) {
-      throw new Error(
-        `Could not find scripts at "package.json": ${JSON.stringify(pkg)}`
-      );
+      throw new Error(`Could not find scripts at "package.json": ${JSON.stringify(pkg)}`);
     }
   }
   process.stdout.write(`\n`);
-  const result = await executeCommandPredictably(
-    cmd,
-    nextInstancePath,
+  const result = await executeProcessPredictably(cmd, nextInstancePath, {
     timeout,
-    (t) => process.stdout.write(t)
-  );
-  if (result.error || result.exitCode !== 0) {
+    output: (t) => process.stdout.write(t),
+  });
+  if (result.error || result.exit !== 0) {
     throw new Error(
       `Failed to execute "${cmd}": ${JSON.stringify({
         ...result,
@@ -472,14 +354,14 @@ async function execScript(nextInstancePath, cmd = "", timeout = 60_000) {
 }
 
 async function execReplaceProjectServer(debug, sync) {
-  await executeWrappedSideEffect('Send upgrade request to manager server', async () => {
-    let result = await sendInternalRequest("manager", "upgrade");
-    if (result.error && result.stage === "network") {
-      console.log("Starting manager...");
-      await spawnManagerProcess(debug, sync);
-      result = await sendInternalRequest("manager", "upgrade");
+  await executeWrappedSideEffect("Send upgrade request to manager server", async () => {
+    let res = await sendInternalRequest("manager", "upgrade");
+    if (res.error && res.stage === "network") {
+      console.log(`Upgrade request to manager failed (${res.stage})`);
+      await spawnManagerProcess(debug, !sync);
+      res = await sendInternalRequest("manager", "upgrade");
     }
-  
-    console.log("Response", result);
+
+    console.log("Response", res);
   });
 }

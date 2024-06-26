@@ -3,12 +3,13 @@ const hhOffset = Math.floor(tzHrOffset / 60).toString();
 const mmOffset = Math.floor(Math.abs(tzHrOffset) % 60).toString().padStart(2, '0');
 
 /**
- * Returns the date time string offseted by the local timezone
+ * Returns the date time string offseted by the local timezone in YYYY-MM-DD HH:MM:SS.zzz format
  * @param {Date | string | number} date
  * @param {boolean} [includeOffset] (default false) Whether to append the local timezone offset to the end of the date (e.g. " -03:00")
  * @returns {string} "YYYY-MM-DD HH:MM:SS.zzz"
  */
-export default function getDateTimeString(date = new Date(), includeOffset = false) { // frequently used
+export default function getDateTimeString(date = new Date(), includeOffset = false) {
+  // Obs: This function is frequently used
   if (typeof date === 'string' && date.startsWith('20') && date[3] === '-' && date[5] === '-') {
     if (date.length === ('2024-04-04 04'.length)) {
       date = date + ':00:00';

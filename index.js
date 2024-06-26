@@ -1,49 +1,104 @@
 import path from "node:path";
-import { loadEnvSync } from "./src/lib/loadEnvSync.js";
-import attachToConsole from "./src/lib/attachToConsole.js";
-import {
-  getCachedParsedProgramArgs,
-  getInitForMode,
-} from "./src/getProgramArgs.js";
+import { loadEnvSync } from "./src/utils/loadEnvSync.js";
+import attachToConsole from "./src/logs/attachToConsole.js";
+import { getParsedProgramArgs, getInitForMode } from "./src/lib/getProgramArgs.js";
+import { checkPathStatusSync } from "./src/utils/checkPathStatus.js";
 
 loadEnvSync([process.cwd()], process.env);
 
-if (!process.env.DEPLOYMENT_FOLDER_NAME) {
-  process.env.DEPLOYMENT_FOLDER_NAME = "deployment";
+const parsed = getParsedProgramArgs();
+
+if (parsed.sync && parsed.mode !== "schedule") {
+  console.log(`Warning: Syncronous flag argument only works in "schedule" mode, but current mode is "${parsed.mode}"`);
 }
 
-const parsed = getCachedParsedProgramArgs();
-
-if (parsed.options.mode !== "help" && parsed.options.mode !== "logs") {
-  attachToConsole(
-    "log",
-    path.resolve(
-      process.env.LOG_FOLDER_NAME || process.cwd(),
-      `${parsed.options.mode}.log`
-    )
-  );
-}
-
-if (parsed.remaining.length) {
-  console.log(`Invalid program arguments: ${JSON.stringify(parsed.remaining)}`);
-  process.exit(1);
-}
-
-const initMethod = getInitForMode(parsed.options.mode);
-
-if (!initMethod) {
-  console.log(`Invalid program mode: ${JSON.stringify(process.argv)}`);
-  process.exit(1);
-}
-
-parsed.options.debug &&
+if (parsed.ref && !["schedule", "process"].includes(parsed.mode)) {
   console.log(
-    `Starting script as "${parsed.options.mode}" mode${
-      parsed.options.dry ? " in dry mode (no side effects)" : ""
-    }`
+    `Warning: The reference argument is ignored in the current program mode (got "${parsed.mode}" and expected "schedule" or "processor")`
   );
+}
 
-initMethod(parsed.options).catch((err) => {
-  console.log(err);
-  process.exit(1);
-});
+const persistLogs = !["help", "logs"].includes(parsed.options.mode);
+attachToConsole(
+  "log",
+  persistLogs
+    ? path.resolve(process.cwd(), process.env.LOG_FOLDER_NAME || "deployment", `${parsed.options.mode}.log`)
+    : ""
+);
+
+let valid = true;
+if (["schedule", "process", "manager"].includes(parsed.options.mode)) {
+  valid = false;
+  let info = checkPathStatusSync(parsed.options.dir || process.cwd());
+  // Enter .git if it exists and deployment folder doesnt
+  const deployName = process.env.DEPLOYMENT_FOLDER_NAME || "deployment";
+  if (
+    info.type.dir &&
+    !info.children.includes("config") &&
+    info.children.includes(".git") &&
+    !info.children.includes(deployName)
+  ) {
+    const next = checkPathStatusSync([info.path, ".git"]);
+    if (next.type.dir && next.children.includes("config") && next.children.includes("hooks")) {
+      info = next;
+      parsed.options.dir = info.path;
+    }
+  }
+  // Find deployment folder
+  let deploy = checkPathStatusSync(path.resolve(info.path, deployName));
+  let cfg = checkPathStatusSync(path.resolve(deploy.path, ".env"));
+  valid = info.type.dir && deploy.type.dir && cfg.type.file;
+  if (!valid && info.name === deployName) {
+    info = checkPathStatusSync(path.dirname(info.path));
+    deploy = checkPathStatusSync(path.resolve(info.path, deployName));
+    cfg = checkPathStatusSync(path.resolve(deploy.path, ".env"));
+    valid = info.type.dir && deploy.type.dir && cfg.type.file;
+  }
+  if (!valid && info.type.dir && info.children.includes(".git")) {
+    info = checkPathStatusSync(path.resolve(info.path, ".git"));
+    deploy = checkPathStatusSync(path.resolve(info.path, deployName));
+    cfg = checkPathStatusSync(path.resolve(deploy.path, ".env"));
+    valid = info.type.dir && deploy.type.dir && cfg.type.file;
+  }
+  if (!cfg.type.file) {
+    console.log(`Cannot initialize mode because the config file was not found: ${JSON.stringify(".env")}`);
+  }
+  if (valid && info.type.dir && path.resolve(info.path) !== path.resolve(process.cwd())) {
+    parsed.options.dir = info.path;
+    parsed.options.debug && console.log("Target repository path updated:", JSON.stringify(info.path));
+    process.chdir(path.resolve(info.path));
+  }
+}
+
+if (!valid) {
+  console.log(
+    `Cannot initialize "${parsed.options.mode}" mode at ${JSON.stringify(parsed.options.dir || process.cwd())}`
+  );
+} else if (parsed.remaining.length === 1) {
+  console.log(`Invalid program argument: ${JSON.stringify(parsed.remaining[0])}`);
+  valid = false;
+} else if (parsed.remaining.length) {
+  console.log(`Invalid program arguments: ${JSON.stringify(parsed.remaining)}`);
+  valid = false;
+}
+
+if (valid) {
+  const initMethod = getInitForMode(parsed.options.mode);
+
+  if (!initMethod) {
+    console.log(`Invalid program mode: ${JSON.stringify(process.argv)}`);
+    setTimeout(() => process.exit(1), 100);
+  }
+
+  parsed.options.debug &&
+    console.log(`Starting script in "${parsed.options.mode}" mode${parsed.options.dry ? " in dry mode" : ""}`);
+
+  initMethod(parsed.options).catch((err) => {
+    console.log(err);
+    setTimeout(() => process.exit(1), 100);
+  });
+} else {
+  setTimeout(() => process.exit(1), 100);
+}
+
+//getRepoCommitDataUnsafe('./.git/deployment', '').then(console.log).catch(console.log);

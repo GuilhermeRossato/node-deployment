@@ -1,56 +1,92 @@
 // @ts-check
 import path from "path";
-import { spawnBackgroundChild } from "../lib/spawnBackgroundChild.js";
-import { printPreviousLogs } from "../lib/printPreviousLogs.js";
-import { waitForLogFileUpdate } from "../lib/waitForLogFileUpdate.js";
+import { waitForLogFileUpdate } from "../logs/waitForLogFileUpdate.js";
+import getDateTimeString from "../utils/getDateTimeString.js";
+import { getLastLogs } from "../logs/getLastLogs.js";
+import { outputLogEntry } from "../logs/outputDatedLine.js";
+import { executeProcessPredictably } from "../process/executeProcessPredictably.js";
+import sleep from "../utils/sleep.js";
+import { executeWrappedSideEffect } from "../lib/executeWrappedSideEffect.js";
+import { getIntervalString } from "../utils/getIntervalString.js";
+import { getRepoCommitData } from "../lib/getRepoCommitData.js";
+import { isProcessRunningByPid } from "../process/isProcessRunningByPid.js";
 
 /**
- * @param {import("../getProgramArgs.js").Options} options
+ * @type {import("../lib/getProgramArgs.js").InitModeMethod}
  */
 export async function initScheduler(options) {
-  const debug = true;
-  
-  const exe = process.argv[0];
-  const script = process.argv[1];
-  const args = [script, "--process"];
+  const debug = options.debug;
+  const logs = await getLastLogs();
+  const pids = new Set();
+  const list = logs.list.filter((f) => ["proc"].includes(path.basename(f.file).substring(0, 4)));
+  console.log(`Scheduling script started for ${JSON.stringify(logs.projectPath)}`, debug ? "in debug mode" : "");
+
+  let cursor = 0;
+  const last = list[list.length - 1];
+  if (last) {
+    cursor = last.time;
+    let i = Math.max(0, list.length - (debug ? 10 : 2));
+    console.log(
+      `Latest log file "${path.basename(last.file)}" was updated ${getIntervalString(
+        new Date().getTime() - last.time
+      )} ago (at ${getDateTimeString(last.time)})`
+    );
+    await sleep(200);
+    process.stdout.write(`  Displaying ${list.length - i} logs:\n`);
+    await sleep(200);
+    process.stdout.write("\n");
+    await sleep(200);
+    for (i; i < list.length; i++) {
+      const obj = list[i];
+      pids.add(obj.pid);
+      outputLogEntry(obj.file.substring(obj.file.length - 20).padStart(20), obj);
+    }
+    process.stdout.write("\n");
+    await sleep(200);
+    if (debug && i === list.length - 1) {
+      console.log("Last log object:", last);
+    }
+    process.stdout.write("\n");
+    await sleep(200);
+    const runs = await isProcessRunningByPid(last.pid);
+    if (runs) {
+      console.log("This log was written by a process currently in execution at pid", last.pid);
+    }
+  } else {
+    console.log("There are no processor log files");
+  }
+
+  const cwd = logs.projectPath;
+  const program = process.argv[0];
+  const script = path.resolve(process.argv[1]);
+
+  const args = [script, "--processor"];
   if (options.ref) {
     args.push(options.ref);
+    console.log("Loading ref data for", options.ref);
+    const refData = await getRepoCommitData(options.dir, options.ref);
+    console.log("Hash", refData.hash, "Ref", options.ref, "\nCommit", getDateTimeString(refData.date), refData.text);
   }
   if (options.debug) {
-    args.push('--debug');
+    args.push("--debug");
   }
-  const childCwd = process.cwd();
 
-  console.log(
-    `Starting "${path.basename(script)}" with ${args.length - 1} arguments`
-  );
+  debug && console.log(`Spawning processor script "${path.basename(script)}" with ${args.length - 1} arguments`);
+  debug && console.log(`${options.sync ? "Syncronous" : "Detached"} processor execution args:`, args.slice(1));
 
-  console.log(`Executing: "${exe}"`);
-  console.log("Child arg:", args);
-  console.log("Child cwd:", childCwd);
-
-  debug &&
-    console.log(
-      "Starting processor at background and waiting for log update..."
-    );
-  const list = await printPreviousLogs(15, ['process']);
-  debug &&
-    console.log(
-      `Processor has ${list.length} logs`
-    );
-  
-  const cursor = list.length === 0 ? 0 : Math.min(...list.map(a => a.time).filter(a => a > 0));
-  const pids = list.map(a => a.pid).filter(a => a > 0);
-  if (options.dry) {
-    const description = 'Spawning "--process" child';
-    console.log(
-      `Skipping side effect (dry-run enabled): ${description}`
-    );
-    return;
-  }
-  await Promise.all([
-    waitForLogFileUpdate(cursor, pids, ['process']),
-    spawnBackgroundChild(exe, args, childCwd, options.sync),
-  ]);
+  const exec = executeWrappedSideEffect('Spawning "--processor" child', async () => {
+    return await spawnChildScript(program, args, cwd, options.sync);
+  });
+  const wait = executeWrappedSideEffect('Waiting for "processor" logs', async () => {
+    return await waitForLogFileUpdate(cursor, [...pids], ["proc"]);
+  });
+  await Promise.all([exec, wait]);
+  console.log("Schedule mode finished");
 }
 
+async function spawnChildScript(program, args, cwd, detached) {
+  await sleep(500);
+  return await executeProcessPredictably([program, ...args], cwd, {
+    detached,
+  });
+}
