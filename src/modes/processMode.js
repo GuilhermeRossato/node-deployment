@@ -9,6 +9,7 @@ import { isProcessRunningByPid } from "../process/isProcessRunningByPid.js";
 import { executeWrappedSideEffect } from "../lib/executeWrappedSideEffect.js";
 import { executeProcessPredictably } from "../process/executeProcessPredictably.js";
 import { executeGitCheckout } from "../lib/getRepoCommitData.js";
+import { getInstancePathStatuses } from "../lib/getInstancePathStatuses.js";
 const debugProcess = true;
 
 /**
@@ -27,22 +28,24 @@ export async function initProcessor(options) {
       console.log("Shutdown response:", result && result.error && result.stage === "network" ? "(offline)" : result);
     }
   }
-  const oldInstancePath = process.env.OLD_INSTANCE_FOLDER_PATH
-    ? path.resolve(options.dir, process.env.OLD_INSTANCE_FOLDER_PATH)
-    : "";
-  const prevInstancePath = process.env.PREV_INSTANCE_FOLDER_PATH
-    ? path.resolve(options.dir, process.env.PREV_INSTANCE_FOLDER_PATH)
-    : "";
-  const currInstancePath = path.resolve(options.dir, process.env.CURR_INSTANCE_FOLDER_PATH || "current-instance");
-  const nextInstancePath = path.resolve(options.dir, process.env.NEXT_INSTANCE_FOLDER_PATH || "upcoming-instance");
-  const deploymentPath = path.resolve(options.dir, process.env.DEPLOYMENT_FOLDER_NAME || "deployment");
   console.log("Started processor at", JSON.stringify(options.dir));
-  await waitForUniqueProcessor(deploymentPath, nextInstancePath);
+
+  const paths = await getInstancePathStatuses(options);
+  const oldInstancePath = paths.old.path||'';
+  const prevInstancePath = paths.prev.path;
+  const currInstancePath = paths.curr.path;
+  const nextInstancePath = paths.next.path;
+  
+  
+  await waitForUniqueProcessor(paths.deploy.path, nextInstancePath);
   console.log("Waiting for unique processor finished");
+
   const execPurgeRes = await execPurge(oldInstancePath, prevInstancePath, currInstancePath, nextInstancePath);
   console.log(`execPurgeRes`, execPurgeRes);
+
   const execCheckoutRes = await execCheckout(options.dir, nextInstancePath, options.ref);
   console.log(`execCheckoutRes`, execCheckoutRes);
+
   const filesToCopy = (process.env.PIPELINE_STEP_COPY ?? "data,.env,node_modules,build").split(",");
   const execCopyRes = await execCopy(options.dir, nextInstancePath, filesToCopy);
   console.log(`execCopyRes`, execCopyRes);

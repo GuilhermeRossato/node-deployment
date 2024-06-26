@@ -35,14 +35,17 @@ export async function writePidFile(mode, pid = null) {
       console.log(
         "Overwriting",
         JSON.stringify(status.name),
-        `(last updated ${getIntervalString(new Date().getTime() - status.mtime)} ago)`
+        `(updated ${getIntervalString(new Date().getTime() - status.mtime)} ago)`
       );
   }
   pid = (pid || process.pid).toString();
-  await executeWrappedSideEffect(`Writing pid at "./${path.basename(status.parent)}/${status.name}"`, async () => {
-    await fs.promises.writeFile(status.path, pid);
-    options.debug && console.log(status.type.file ? "Updated" : "Created", mode, "pid file at:", status.path);
-  });
+  await executeWrappedSideEffect(
+    `${status.type.file ? "Updating" : "Creating"} pid at "./${path.basename(status.parent)}/${status.name}"`,
+    async () => {
+      await fs.promises.writeFile(status.path, pid);
+      options.debug && console.log(status.type.file ? "Updated" : "Created", mode, "pid file at:", status.path);
+    }
+  );
   return {
     time: new Date().getTime(),
     pid,
@@ -64,7 +67,7 @@ export async function readPidFile(mode) {
     };
   }
   const pid = await asyncTryCatchNull(fs.promises.readFile(status.path, "utf-8"));
-  const valid = pid && typeof pid === "string" && pid !== '0' && !/\D/g.test(pid.trim());
+  const valid = pid && typeof pid === "string" && pid !== "0" && !/\D/g.test(pid.trim());
   const running = valid && (await isProcessRunningByPid(pid));
   return {
     time: status.mtime,

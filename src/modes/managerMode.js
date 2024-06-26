@@ -16,6 +16,7 @@ import getDateTimeString from "../utils/getDateTimeString.js";
 import { getIntervalString } from "../utils/getIntervalString.js";
 import { getRepoCommitData } from "../lib/getRepoCommitData.js";
 import { executeProcessPredictably } from "../process/executeProcessPredictably.js";
+import { getInstancePathStatuses } from "../lib/getInstancePathStatuses.js";
 let instancePath = "";
 let terminating = false;
 let stopping = false;
@@ -26,9 +27,11 @@ let server = null;
  * @type {import("../lib/getProgramArgs.js").InitModeMethod}
  */
 export async function initManager(options) {
+  if (options.dry) {
+    console.log('Warning: The manager process ignores the "dry" parameter');
+  }
   const host = process.env.INTERNAL_DATA_SERVER_HOST || "127.0.0.1";
   const port = process.env.INTERNAL_DATA_SERVER_PORT || "49737";
-
   console.log(`Creating internal server at http://${host}:${port}/...`);
   await sleep(300);
   try {
@@ -42,7 +45,7 @@ export async function initManager(options) {
   }
   await sleep(300);
   console.log(`Manager process is successfully listening at http://${host}:${port}/`);
-  console.log("Writing manager pid file...");
+  console.log("Writing manager pid file with", process.pid);
   const expected = process.pid.toString().trim();
   await writePidFile("manager", expected);
   await sleep(500 + Math.random() * 500);
@@ -85,38 +88,31 @@ export async function initManager(options) {
 }
 
 async function startInstanceChild(hash = "") {
-  const { options } = getParsedProgramArgs(false);
-  const root = options.dir || process.cwd();
-  const currInstancePath = path.resolve(
-    root,
-    process.env.CURR_INSTANCE_FOLDER_PATH || process.env.INSTANCE_FOLDER_PATH || "current-instance"
-  );
-  let status = await checkPathStatus(currInstancePath);
-  if (!status.type.dir) {
-    throw new Error(
-      `Failed to start instance because instance folder does not exist at ${JSON.stringify(status.path)}`
-    );
+  const paths = await getInstancePathStatuses();
+  const curr = paths.curr;
+  if (!curr.type.dir) {
+    throw new Error(`Failed to start instance because instance folder does not exist at ${JSON.stringify(curr.path)}`);
   }
-  if (!status.children.length) {
-    throw new Error(`Failed to start instance because instance folder is empty at ${JSON.stringify(status.path)}`);
+  if (!curr.children.length) {
+    throw new Error(`Failed to start instance because instance folder is empty at ${JSON.stringify(curr.path)}`);
   }
   let main = "";
   let pkg = {};
-  if (status.children.includes("package.json")) {
-    const pkgText = await asyncTryCatchNull(fs.promises.readFile(path.resolve(status.path, "package.json"), "utf-8"));
+  if (curr.children.includes("package.json")) {
+    const pkgText = await asyncTryCatchNull(fs.promises.readFile(path.resolve(curr.path, "package.json"), "utf-8"));
     if (pkgText && typeof pkgText === "string" && pkgText.length > 2 && pkgText.trim().startsWith("{")) {
       try {
         pkg = JSON.parse(pkgText);
-        main = path.resolve(status.path, pkg.main);
+        main = path.resolve(curr.path, pkg.main);
       } catch (err) {
-        console.log("Failed to parse package.json at:", JSON.stringify(status.path), err.message);
+        console.log("Failed to parse package.json at:", JSON.stringify(curr.path), err.message);
       }
     } else {
-      console.log("Failed to read package.json at:", JSON.stringify(status.path));
+      console.log("Failed to read package.json at:", JSON.stringify(curr.path));
     }
   }
-  if (!main && status.children.includes("index.js")) {
-    main = path.resolve(status.path, "index.js");
+  if (!main && curr.children.includes("index.js")) {
+    main = path.resolve(curr.path, "index.js");
   }
   const scripts = pkg && pkg.scripts ? Object.keys(pkg.scripts) : [];
   let type = "";
@@ -143,7 +139,7 @@ async function startInstanceChild(hash = "") {
     }
   }
   if (!cmd) {
-    main = path.resolve(status.path, status.children.find((f) => f.endsWith(".js")) || "index.js");
+    main = path.resolve(curr.path, curr.children.find((f) => f.endsWith(".js")) || "index.js");
     cmd = `node ${main}`;
     type = "node script";
   }
@@ -160,16 +156,16 @@ async function startInstanceChild(hash = "") {
     type = `${prefix.substring(prefix.lastIndexOf("/") + 1)} command`;
   }
   console.log("Instance command type:", JSON.stringify(type));
-  const logs = await getLogFileStatus(root, "instance");
+  const logs = await getLogFileStatus(paths.deploy, "instance");
   if (!logs.parent) {
     console.log("Creating instance log folder at:", JSON.stringify(path.dirname(logs.path)));
     await fs.promises.mkdir(path.dirname(logs.path), { recursive: true });
   }
-  console.log(logs.type.file ? "Existing" : "Upcoming", "log file path:", JSON.stringify(logs.path));
+  console.log(logs.type.file ? "Existing" : "Target", "log file path:", JSON.stringify(logs.path));
   await new Promise((resolve, reject) => {
     console.log("Starting instance process:", cmd.includes('"') || cmd.includes("\\") ? cmd : cmd.split(" "));
     child = child_process.spawn(cmd, {
-      cwd: status.path,
+      cwd: curr.path,
       stdio: ["ignore", "pipe", "pipe"],
       shell: true,
     });
@@ -180,7 +176,7 @@ async function startInstanceChild(hash = "") {
     });
     child.on("spawn", () => {
       console.log("Instance process spawned");
-      instancePath = status.path;
+      instancePath = curr.path;
       pidContents = child.pid.toString();
       writePidFile("instance", pidContents);
       setTimeout(() => {
@@ -216,7 +212,7 @@ async function startInstanceChild(hash = "") {
   return {
     pid: child && typeof child.pid === "number" && child.pid ? child.pid : null,
     cmd,
-    cwd: status.path,
+    cwd: curr.path,
     logs: logs.path,
   };
 }

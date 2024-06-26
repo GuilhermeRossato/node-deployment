@@ -22,7 +22,7 @@ const flagDescs = [
   ["--debug / --verbose / -d", "Enable verbose mode of the deployment manager"],
   ["--force / --yes / -y", "Force confirmations, automatically assuming yes "],
   ["--dry-run / --dry", "Simulate execution by not writing files and causing no side-effects"],
-  ["--sync / --wait", "Execute the deployment pipelines syncronously when in schedule mode"],
+  ["--sync / --wait", "Execute child processes syncronously"],
 ];
 const pad = Math.max(...[...modeDescs, ...flagDescs].map((a) => a[0].length)) + 2;
 
