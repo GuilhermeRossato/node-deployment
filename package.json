@@ -1,8 +1,8 @@
 {
   "name": "node-project-deployment-manager",
   "type": "module",
-  "version": "1.0.0",
-  "description": "Program to process CI/CD of Node.js projects executing deployment steps on update (continuous integration) and server process restart when new versions are available (continuous delivery).",
+  "version": "1.1.0",
+  "description": "Automatic and continuous deployment manager that execute deployment pipeline steps and manage the long-running project process, restarting it when new versios are available",
   "main": "./index.js",
   "scripts": {
     "start": "node ./index.js --help",
