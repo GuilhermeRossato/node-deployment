@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import sleep from "./sleep.js";
 
 /**
  * @param {string} target
@@ -12,8 +13,14 @@ export default async function recursivelyIterateDirectoryFiles(
   target,
   selectFunc = (target, stat) => true,
   array = [],
-  depth = 0
+  depth = 0,
 ) {
+  await sleep(50);
+  if (depth === 0) {
+    console.log('Begining iteration at', target);
+  } else {
+    process.stdout.write(`\niter: ${target} ${depth}\n`)
+  }
   if (depth > 20) {
     return array;
   }

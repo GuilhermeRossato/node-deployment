@@ -6,6 +6,7 @@ import { outputLogEntry } from "../logs/outputDatedLine.js";
 import { readPidFile } from "../lib/readWritePidFile.js";
 import sleep from "../utils/sleep.js";
 import { executeWrappedSideEffect } from "../lib/executeWrappedSideEffect.js";
+import { checkPathStatus } from "../utils/checkPathStatus.js";
 
 /**
  * @type {import("../lib/getProgramArgs.js").InitModeMethod}
@@ -31,8 +32,24 @@ export async function initStatus(options) {
       await spawnManagerProcess(options.debug, options.sync);
     });
   }
-
-  const read = await readPidFile('manager');
+  let read = {
+    time: NaN,
+    pid: null,
+    running: false,
+    path: "",
+  };
+  {
+    const root = options.dir || process.cwd();
+    let deploy = await checkPathStatus([root, process.env.DEPLOYMENT_FOLDER_NAME || "deployment"]);
+    if (!deploy.type.dir) {
+      deploy = await checkPathStatus([root, ".git", process.env.DEPLOYMENT_FOLDER_NAME || "deployment"]);
+    }
+    if (deploy.type.dir) {
+      read = await readPidFile("manager");
+    } else {
+      console.log('Warning: The repository deployment folder was not found at this project');
+    }
+  }
   if (read.running) {
     console.log("Requesting status from manager process server with pid", read.pid);
     response = await sendInternalRequest("manager", "status");
@@ -45,7 +62,7 @@ export async function initStatus(options) {
   } else {
     console.log("The manager process is not currently in execution");
     if (options.restart || options.start) {
-      console.log("Attempting to start the manager process", options.sync ? 'syncronously...' : '...');
+      console.log("Attempting to start the manager process", options.sync ? "syncronously..." : "...");
       await spawnManagerProcess(options.debug, !options.sync);
       console.log("Spawn manager process resolved");
       response = null;
@@ -67,17 +84,14 @@ export async function initStatus(options) {
     await sleep(500);
     console.log("Loading latest manager process logs...");
 
-    const logs = await getLastLogs();
-    const pids = new Set();
+    const logs = await getLastLogs(['mana']);
     const list = logs.list.filter((f) => ["mana"].includes(path.basename(f.file).substring(0, 4)));
     if (list.length === 0) {
       console.log("Could not find any manager log entry to display");
     } else {
       console.log(`Loaded ${list.length} log entries from ${JSON.stringify(logs.projectPath)}`);
-      
       for (let i = Math.max(0, list.length - 15); i < list.length - 1; i++) {
         const obj = list[i];
-        pids.add(obj.pid);
         outputLogEntry(obj.file.substring(obj.file.length - 20).padStart(20), obj);
       }
     }

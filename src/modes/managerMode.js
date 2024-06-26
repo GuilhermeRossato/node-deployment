@@ -1,8 +1,8 @@
 import fs from "fs";
 import path from "path";
 import child_process from "child_process";
-import createInternalDataServer from "../utils/createInternalServer.js";
-import { getPidFileStatus, readPidFile } from "../lib/readWritePidFile.js";
+import createInternalServer from "../utils/createInternalServer.js";
+import { readPidFile } from "../lib/readWritePidFile.js";
 import { isProcessRunningByPid } from "../process/isProcessRunningByPid.js";
 import sleep from "../utils/sleep.js";
 import asyncTryCatchNull from "../utils/asyncTryCatchNull.js";
@@ -31,7 +31,7 @@ export async function initManager(options) {
 
   console.log(`Creating internal server at http://${host}:${port}/...`);
   await sleep(300);
-  const result = await createInternalDataServer(host, port, handleRequest);
+  const result = await createInternalServer(host, port, handleRequest);
   await sleep(300);
   console.log(`Manager process is successfully listening at http://${host}:${port}/`);
   server = result.server;
@@ -47,9 +47,6 @@ export async function initManager(options) {
       console.log("Pid file contents:", JSON.stringify(written), "expected:", JSON.stringify(expected));
     }
   }
-
-  console.log(`Manager process is ready`);
-
   let t;
   t = setInterval(async () => {
     const read = await readPidFile("manager");
@@ -60,11 +57,22 @@ export async function initManager(options) {
       clearInterval(t);
     }
   }, 30_000);
+
+  console.log(`Manager process is ready to start instance child`);
+
   const data = await getRepoCommitData(options.dir);
-  if (data.hash) {
-    const result = await startInstanceChild(data.hash);
-    console.log("Start instance child result:");
-    console.log(result);
+  if (data?.hash) {
+    try {
+      const result = await startInstanceChild(data.hash);
+      console.log("Start instance child result:");
+      console.log(result);
+    } catch (err) {
+      console.log("Start instance child failed:");
+      console.log(err);
+    }
+  } else {
+    console.log("Cannot start instance process because loading repository data failed:");
+    console.log(data);
   }
 }
 

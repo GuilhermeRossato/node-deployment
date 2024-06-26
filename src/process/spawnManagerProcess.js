@@ -11,7 +11,7 @@ import { getIntervalString } from "../utils/getIntervalString.js";
 import { isProcessRunningByPid } from "./isProcessRunningByPid.js";
 
 export async function spawnManagerProcess(debug = false, detached = true) {
-  const logs = await getLastLogs();
+  const logs = await getLastLogs(['mana']);
   const pids = new Set();
   const list = logs.list.filter((f) => ["mana"].includes(path.basename(f.file).substring(0, 4)));
   console.log(`Spawning manager script for ${JSON.stringify(logs.projectPath)}`, debug ? "in debug mode" : "");
@@ -20,18 +20,18 @@ export async function spawnManagerProcess(debug = false, detached = true) {
   const last = list[list.length - 1];
   if (last) {
     cursor = last.time;
-    let i = Math.max(0, list.length - (debug ? 10 : 2));
     console.log(
       `Latest log file "${path.basename(last.file)}" was updated ${getIntervalString(
         new Date().getTime() - last.time
       )} ago (at ${getDateTimeString(last.time)})`
     );
     await sleep(200);
+    let i = Math.max(0, list.length - (debug ? 10 : 2));
     process.stdout.write(`  Displaying ${list.length - i} logs:\n`);
     await sleep(200);
     process.stdout.write("\n");
     await sleep(200);
-    for (i; i < list.length; i++) {
+    for (i=i; i < list.length; i++) {
       const obj = list[i];
       pids.add(obj.pid);
       outputLogEntry(obj.file.substring(obj.file.length - 20).padStart(20), obj);

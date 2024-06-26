@@ -80,18 +80,17 @@ export async function initConfig(options) {
   }
   options.debug && console.log("Requesting manager process status...");
   let res;
-  let offline = initialized;
-  if (!offline) {
-    res = await sendInternalRequest("manager", "status");
-    offline = res.error && res.stage === "network";
-    if (offline) {
-      console.log(`Status request to manager failed to connect (${res.stage})`);
-    }
+  let offline;
+  res = await sendInternalRequest("manager", "status");
+  offline = res.error && res.stage === "network";
+  if (offline) {
+    console.log(`Status request to manager failed to connect (${res.stage})`);
   }
   if (offline) {
     const detached = !options.sync;
     console.log("Attempting to spawn manager process", detached ? "detached" : "attached");
-    await spawnManagerProcess(options.debug, detached);
+    const res = await spawnManagerProcess(options.debug, detached);
+    console.log("Spawning of manager process resolved:", res);
     await sleep(500);
   }
   if (offline) {
@@ -442,25 +441,23 @@ async function initializeGitRepositoryProject(targetPath, forceUpdate = false) {
   const scr = await checkPathStatus(deployScriptPath);
   if (!scr.type.file || new Date().getTime() - scr.mtime > 15_000) {
     console.log("Checking the deployment script for the project");
-    const candidates = await Promise.all(
+    const possibleList = await Promise.all(
       [
         deployScriptPath,
         "./node-deploy.cjs",
         process.argv[1],
+        path.resolve(process.argv[1]),
         path.resolve(path.dirname(path.resolve(process.cwd(), process.argv[1])), "node-deploy.cjs"),
       ].map((p) => checkPathStatus(p))
     );
-    const lastUpdate = Math.max(...candidates.map((s) => (s.type.file ? s.mtime : null)).filter((t) => t));
+    const candidates = possibleList.filter((f) => f.type.file && f.mtime);
+    const lastUpdate = Math.max(...candidates.map((s) => s.mtime));
     const match = candidates.find((c) => c.mtime === lastUpdate);
     if (match) {
-      console.log(
-        "Last deployment script file:",
-        JSON.stringify(match.path),
-        "updated at",
-        getDateTimeString(match.mtime)
-      );
+      console.log("Local deployment script path:", JSON.stringify(match.path));
+      console.log("Local deployment script date:", getDateTimeString(match.mtime));
+      console.log("Current deployment script file:", path.resolve(process.argv[1]));
     }
-
     let response;
     try {
       response = await fetchProjectReleaseFileSource();
@@ -470,6 +467,13 @@ async function initializeGitRepositoryProject(targetPath, forceUpdate = false) {
       );
     } catch (err) {
       console.log("Remote deployment script could not be loaded:", err.message);
+    }
+    if (match && match.mtime && response && response.updated) {
+      if (match.mtime > response.updated.getTime()) {
+        console.log("Local file was updated after remote");
+      } else {
+        console.log("Local file was updated before remote");
+      }
     }
     const fromRemote = response ? response.updated.getTime() : 0;
     const fromLocal = match ? 0 : new Date(match.mtime).getTime();
@@ -491,10 +495,14 @@ async function initializeGitRepositoryProject(targetPath, forceUpdate = false) {
       buffer = await fs.promises.readFile(match.path);
     }
     if (buffer) {
-      await executeWrappedSideEffect("Add deployment script", async () => {
-        await fs.promises.writeFile(deployScriptPath, buffer);
-        console.log("Deployment script ready at", JSON.stringify(deployScriptPath));
-      });
+      if (scr.type.file) {
+        console.log("Skipping deployment script overwrite");
+      } else {
+        await executeWrappedSideEffect("Add deployment script", async () => {
+          await fs.promises.writeFile(deployScriptPath, buffer);
+          console.log("Deployment script ready at", JSON.stringify(deployScriptPath));
+        });
+      }
     }
   }
   await initializeConfigFile(targetPath);

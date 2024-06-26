@@ -138,6 +138,15 @@ async function getProjectRepoLogsFiles(projetPath) {
       return false;
     }
   );
-  const fileList = await Promise.all(everything.map((f) => checkPathStatus(f)));
-  return fileList.filter((f) => f.type.file && f.name.endsWith(".log"));
+  const statusList = await Promise.all(everything.map((f) => checkPathStatus(f)));
+  const fileList = [];
+  for (const s of statusList) {
+    if (fileList.find(f => f.path === s.path)) {
+      continue;
+    }
+    if (s.type.file && s.name.endsWith(".log")) {
+      fileList.push(s);
+    }
+  }
+  return fileList;
 }
