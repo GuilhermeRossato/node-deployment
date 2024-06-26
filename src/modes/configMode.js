@@ -57,11 +57,17 @@ export async function initConfig(options) {
   }
   let initialized = false;
   if (!status.type.proj) {
-    console.log("Initializing project at setup");
+    console.log("Initializing project target:", targetPath);
     await initializeGitRepositoryProject(targetPath, options.force);
     initialized = true;
     status = await checkPathStatus(targetPath);
+    if (!status.type.proj) {
+      console.log("Obs: Initializing project did not update status:", status.type);
+    }
   }
+  console.log("Updating path to:", targetPath);
+  process.chdir(targetPath);
+  options.dir = targetPath;
   console.log("Verifying hash...");
   const commitData = await getRepoCommitData(targetPath);
   options.debug &&

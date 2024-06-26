@@ -61,12 +61,12 @@ export async function spawnManagerProcess(debug = false, detached = true) {
   console.log(`Spawning manager script "${path.basename(script)}" with ${args.length - 1} arguments`);
   debug && console.log(`${detached ? "Detached" : "Syncronous"} manager execution args:`, args.slice(1));
 
+  process.stdout.write("\n");
   const exec = executeWrappedSideEffect('Spawning "--manager" child', async () => {
     return await spawnChildScript(program, args, cwd, detached);
   });
-  process.stdout.write("\n");
   const wait = executeWrappedSideEffect('Waiting for "manager" logs', async () => {
-    return await waitForLogFileUpdate(cursor, [...pids], ["mana"]);
+    return await waitForLogFileUpdate(cursor, [], ["mana"]);
   });
   await Promise.all([exec, wait]);
   await sleep(200);

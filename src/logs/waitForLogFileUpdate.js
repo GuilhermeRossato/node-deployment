@@ -6,9 +6,7 @@ const debug = false;
 
 export async function waitForLogFileUpdate(cursor = 0, pids = [], modes = []) {
   for (let cycle = 0; true; cycle++) {
-    if (cycle !== 0) {
-      await sleep(200);
-    }
+    await sleep(200);
     const next = await getLastLogs(modes);
     if (cycle === 0) {
       console.log(`Waiting for log updates (currently ${next.names.length} files matched modes)`);

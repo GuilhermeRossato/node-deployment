@@ -116,15 +116,22 @@ async function getProjectRepoLogs(
 }
 
 /**
- * @param {string} projetPath
+ * @param {string} target
  */
-async function getProjectRepoLogsFiles(projetPath) {
-  const status = await checkPathStatus(projetPath);
+async function getProjectRepoLogsFiles(target) {
+  const status = await checkPathStatus(target);
   if (!status.type.dir) {
     throw new Error(`Invalid target: ${status.path}`);
   }
+  if (!status.children.includes(process.env.DEPLOY_FOLDER_NAME||'deployment')) {
+    throw new Error(`Invalid unitialized target: ${status.path}`);
+  }
+  const deploy = await checkPathStatus([status.path, process.env.DEPLOY_FOLDER_NAME||'deployment']);
+  if (!deploy.type.dir || !deploy.children.includes('node-deploy.cjs')) {
+    throw new Error(`Invalid target deploy folder: ${deploy.path}`);
+  }
   const everything = await recursivelyIterateDirectoryFiles(
-    status.path,
+    deploy.path,
     (name, _path, stat, depth) => {
       if (depth >= 3) {
         return false;
