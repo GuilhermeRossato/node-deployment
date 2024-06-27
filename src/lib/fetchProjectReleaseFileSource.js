@@ -5,7 +5,7 @@ export default async function fetchProjectReleaseFileSource() {
   const projectName = "node-deployment";
   const fileName = "node-deploy.cjs";
   const res = await fetchProjectReleaseFileSourceRaw(authorName, projectName, fileName);
-  if (!res) {
+  if (!res||!res.release||!res.buffer) {
     throw new Error('Failed to fetch project release source file');
   }
   const prefix = Buffer.from(

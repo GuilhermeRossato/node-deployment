@@ -21,15 +21,22 @@ import path from "node:path";
  * @returns {Promise<PathStatus>} The status of the path
  */
 export async function checkPathStatus(target) {
-  target = path.resolve(
-    ...(target instanceof Array
+  /** @type {any[]} */
+  let tlist =
+    target instanceof Array
       ? target
       : typeof target === "string"
       ? [target]
       : typeof target === "object" && typeof target.path === "string"
       ? [target.path]
-      : [""])
-  );
+      : [""];
+  if (tlist.some((t) => typeof t === "object")) {
+    tlist = tlist.map((t) => (typeof t === "object" && typeof t.path === "string" && t.path ? t.path : t));
+  }
+  if (tlist.some((t) => typeof t !== "string")) {
+    throw new Error(`Invalid path parts: ${JSON.stringify(tlist)}`);
+  }
+  target = path.resolve(...tlist);
   const s = {
     path: target.replace(/\\/g, "/"),
     name: path.basename(target),
@@ -85,15 +92,22 @@ export async function checkPathStatus(target) {
  * @returns {PathStatus} The status of the path
  */
 export function checkPathStatusSync(target) {
-  target = path.resolve(
-    ...(target instanceof Array
+  /** @type {any[]} */
+  let tlist =
+    target instanceof Array
       ? target
       : typeof target === "string"
       ? [target]
       : typeof target === "object" && typeof target.path === "string"
       ? [target.path]
-      : [""])
-  );
+      : [""];
+  if (tlist.some((t) => typeof t === "object")) {
+    tlist = tlist.map((t) => (typeof t === "object" && typeof t.path === "string" && t.path ? t.path : t));
+  }
+  if (tlist.some((t) => typeof t !== "string")) {
+    throw new Error(`Invalid path parts: ${JSON.stringify(tlist)}`);
+  }
+  target = path.resolve(...tlist);
   const s = {
     path: target.replace(/\\/g, "/"),
     name: path.basename(target),

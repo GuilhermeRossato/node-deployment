@@ -2,18 +2,27 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkPathStatus } from "../utils/checkPathStatus.js";
 import fetchProjectReleaseFileSource from "../lib/fetchProjectReleaseFileSource.js";
+import getDateTimeString from "../utils/getDateTimeString.js";
 
 /**
  * @type {import("../lib/getProgramArgs.js").InitModeMethod}
  */
 export async function initUpgrade(options) {
   const release = await fetchProjectReleaseFileSource();
-  const buffer = release?.buffer;
-  const info = await checkPathStatus(path.resolve(process.cwd(), options.dir || process.argv[1]));
+  console.log("Loaded", JSON.stringify(release.name), "from", JSON.stringify(release.release), "updated at", getDateTimeString(release.updated));
+  const buffer = release.buffer;
+  let info = await checkPathStatus(path.resolve(process.cwd(), options.dir || process.argv[1]));
   if (info.type.file) {
     const stat = await fs.promises.stat(info.path);
-    if (info.name !== "node-deploy.cjs" && stat.size !== 0 && (stat.size < 40000 || stat.size > 120000)) {
-      throw new Error(`Specified file path does not look like a source file at ${info.path}`);
+    if (
+      !options.force &&
+      info.name !== "node-deploy.cjs" &&
+      stat.size !== 0 &&
+      (stat.size < 40000 || stat.size > 120000)
+    ) {
+      throw new Error(
+        `Specified file path does not look like a source file at ${info.path} (can be ignored with "--force")`
+      );
     }
     return await performUpgrade(info.path, buffer);
   }

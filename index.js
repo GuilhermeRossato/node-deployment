@@ -18,16 +18,21 @@ if (parsed.ref && !["schedule", "process"].includes(parsed.mode)) {
   );
 }
 
-const persistLogs = !["help", "logs"].includes(parsed.options.mode);
+const persistLogs = !["help", "logs", "runtime"].includes(parsed.options.mode);
 attachToConsole(
   "log",
   persistLogs
-    ? path.resolve(process.cwd(), process.env.LOG_FOLDER_NAME || "deployment", `${parsed.options.mode}.log`)
-    : ""
+    ? path.resolve(
+        process.cwd(),
+        process.env.LOG_FOLDER_NAME || process.env.DEPLOYMENT_FOLDER_NAME || "deployment",
+        `${["instance", "runtime"].includes(parsed.options.mode) ? "logs" : parsed.options.mode}.log`
+      )
+    : "",
+  ["help", "logs", "runtime"].includes(parsed.options.mode)
 );
 
 let valid = true;
-if (["status", "logs", "schedule", "process", "manager"].includes(parsed.options.mode)) {
+if (["status", "logs", "runtime", "schedule", "process", "manager"].includes(parsed.options.mode)) {
   valid = false;
   let info = checkPathStatusSync(parsed.options.dir || process.cwd());
   // Enter .git if it exists and deployment folder doesnt
@@ -81,14 +86,14 @@ if (["status", "logs", "schedule", "process", "manager"].includes(parsed.options
     cfg = checkPathStatusSync(path.resolve(deploy.path, ".env"));
     valid = info.type.dir && deploy.type.dir && cfg.type.file;
   }
-  if (!cfg.type.file) {
+  if (valid && !cfg.type.file) {
     console.log(`Cannot initialize mode because the config file was not found: ${JSON.stringify(".env")}`);
     valid = false;
   }
-  if (parsed.options.dir !== info.path) {
-    parsed.options.debug && console.log("Current project path is", parsed.options.dir);
+  if (!parsed.options.dir || parsed.options.dir !== info.path) {
+    // parsed.options.debug && console.log("Current project path is", parsed.options.dir);
     parsed.options.dir = info.path;
-    parsed.options.debug && console.log("Updated project path is", info.path);
+    //parsed.options.debug && console.log("Updated project path is", info.path);
   }
   process.chdir(path.resolve(info.path));
 }

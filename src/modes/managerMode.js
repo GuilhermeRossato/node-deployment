@@ -90,6 +90,9 @@ export async function initManager(options) {
 async function startInstanceChild(hash = "") {
   const paths = await getInstancePathStatuses();
   const curr = paths.curr;
+  if (!curr.path) {
+    throw new Error(`Failed to start instance because current folder is invalid: ${JSON.stringify(curr)}`);
+  }
   if (!curr.type.dir) {
     throw new Error(`Failed to start instance because instance folder does not exist at ${JSON.stringify(curr.path)}`);
   }
@@ -103,7 +106,7 @@ async function startInstanceChild(hash = "") {
     if (pkgText && typeof pkgText === "string" && pkgText.length > 2 && pkgText.trim().startsWith("{")) {
       try {
         pkg = JSON.parse(pkgText);
-        main = path.resolve(curr.path, pkg.main);
+        main = path.resolve(curr.path, pkg.main ? pkg.main : "index.js");
       } catch (err) {
         console.log("Failed to parse package.json at:", JSON.stringify(curr.path), err.message);
       }
@@ -156,7 +159,7 @@ async function startInstanceChild(hash = "") {
     type = `${prefix.substring(prefix.lastIndexOf("/") + 1)} command`;
   }
   console.log("Instance command type:", JSON.stringify(type));
-  const logs = await getLogFileStatus(paths.deploy, "instance");
+  const logs = await getLogFileStatus([path.dirname(paths.deploy.path), "instance"]);
   if (!logs.parent) {
     console.log("Creating instance log folder at:", JSON.stringify(path.dirname(logs.path)));
     await fs.promises.mkdir(path.dirname(logs.path), { recursive: true });
@@ -164,10 +167,12 @@ async function startInstanceChild(hash = "") {
   console.log(logs.type.file ? "Existing" : "Target", "log file path:", JSON.stringify(logs.path));
   await new Promise((resolve, reject) => {
     console.log("Starting instance process:", cmd.includes('"') || cmd.includes("\\") ? cmd : cmd.split(" "));
+    console.log("Instance path:", curr.path);
     child = child_process.spawn(cmd, {
       cwd: curr.path,
       stdio: ["ignore", "pipe", "pipe"],
       shell: true,
+      timeout: 0,
     });
     let pidContents = "";
     child.on("error", (err) => {
@@ -215,6 +220,51 @@ async function startInstanceChild(hash = "") {
     cwd: curr.path,
     logs: logs.path,
   };
+}
+
+async function handleUpgradeRequest(next) {
+  console.log("Retrieving instance path statuses...");
+  const paths = await getInstancePathStatuses();
+  console.log("Instance path status:", JSON.stringify(paths, null, "  "));
+  if (paths.curr.type.dir) {
+    const bkpInstancePath = `${paths.curr.path}-bkp`;
+    const bkp = await checkPathStatus(bkpInstancePath);
+    if (bkp.type.dir) {
+      console.log("Removing backup instance folder at", bkpInstancePath);
+      process.stdout.write("\n");
+      const result = await executeProcessPredictably(`rm -rf "${bkpInstancePath}"`, path.dirname(bkpInstancePath), {
+        timeout: 10_000,
+        shell: true,
+        output: "inherit",
+      });
+      console.log(result);
+      await sleep(500);
+    }
+    console.log("Moving current instance files to", bkpInstancePath);
+    process.stdout.write("\n");
+    const result = await executeProcessPredictably(
+      `mv -f "${paths.curr.path}" "${bkpInstancePath}"`,
+      path.dirname(paths.curr.path),
+      { timeout: 10_000, shell: true, output: "inherit" }
+    );
+    console.log(result);
+    await sleep(500);
+  }
+  if (next.type.dir) {
+    const cwd = path.dirname(paths.curr.path);
+    const cmd = `mv -f "${next.path}" "${paths.curr.path}"`;
+    console.log("Moving next instance files to", paths.curr.path);
+    //console.log("Moving cmd:", cmd);
+    //console.log("Moving cwd:", cwd);
+    process.stdout.write("\n");
+    const result = await executeProcessPredictably(cmd, cwd, { timeout: 10_000, shell: true, output: "inherit" });
+    console.log(result);
+    console.log(
+      result.exit === 0 ? "Successfully" : "Failed to",
+      "replaced the current instance folder with next instance folder"
+    );
+    await sleep(500);
+  }
 }
 
 async function handleRequest(url, method, data) {
@@ -305,38 +355,18 @@ async function handleRequest(url, method, data) {
         return { success: false, reason: `Failed at termination: ${err.message}`, stack: err.stack };
       }
     }
-    if (data.nextInstancePath) {
-      const next = await checkPathStatus(data.nextInstancePath);
-      console.log("New instance version requested at", JSON.stringify(path.basename(data.nextInstancePath)));
-      let currInstancePath = data.currInstancePath || instancePath;
-      if (!currInstancePath) {
-        const { options } = getParsedProgramArgs();
-        currInstancePath = path.resolve(options.dir, process.env.CURR_INSTANCE_FOLDER_PATH || "current-instance");
-      }
-      if (next.type.dir) {
-        const curr = await checkPathStatus(currInstancePath);
-        if (curr.type.dir) {
-          const bkpInstancePath = `${curr.path}-bkp`;
-          console.log("Moving current instance files to", bkpInstancePath);
-          const result = await executeProcessPredictably(
-            `mv -rf "${curr.path}" "${bkpInstancePath}"`,
-            path.dirname(curr.path),
-            { timeout: 10_000 }
-          );
-          console.log(result);
-        }
-        if (next.type.dir) {
-          console.log("Moving next instance files to", curr.path);
-          const result = await executeProcessPredictably(
-            `mv -rf "${next.path}" "${curr.path}"`,
-            path.dirname(curr.path),
-            { timeout: 10_000 }
-          );
-          console.log(result);
-          console.log("Successfully replaced current instance folder with next instance folder");
+    const nextPath = data.nextInstancePath;
+    if (nextPath) {
+      const next = await checkPathStatus(nextPath);
+      console.log("New instance version requested for", JSON.stringify(next.name));
+      if (next.type.dir && next.children.length) {
+        try {
+          await handleUpgradeRequest(next);
+        } catch (err) {
+          console.log("Failed while handling new instance version request:", err);
         }
       } else {
-        console.log("The new instance path was not found at", JSON.stringify(next.path));
+        console.log("The new instance path was not found at", JSON.stringify(next.name));
       }
     }
     console.log("Spawning instance process...");
@@ -354,7 +384,7 @@ async function handleRequest(url, method, data) {
     const runs = pres.pid ? await isProcessRunningByPid(pres.pid) : false;
     console.log("Verifying instance pid from", pres.source, ":", pres.pid, runs ? "(running)" : "(not running)");
     return {
-      success: runs,
+      success: true,
       reason: "Started instance folder",
       pid: pres.pid,
       logs: logs.list,

@@ -6,12 +6,14 @@ const modeDescRec = {
   "--setup": "Initialize and setup a project for automatic deployment",
   "--config": "Change settings and configure a repository interactively",
   "--status / -s": "Retrieve status information from the manager process",
-  "--logs / -l": "Print and stream logs continuously",
+  "--logs / -l": "Print and stream all logs continuously",
+  "--instance / --app": "Print and stream logs from the project instance process",
   "--start / --restart": "Start or restart the manager process and display its status",
-  "--shutdown": "Stop a project process and its instance manager process",
+  "--shutdown": "Stop the project process and the instance manager process",
   "--schedule": "Manually schedule the asyncronous execution of the deployment pipeline",
   "--schedule <commit>": "Schedules deployment of a specific version of the project",
   "--schedule <ref>": "Schedules deployment specifying the project version by a reference",
+  "--upgrade <path>": "Fetch the deployment script source and write to a target file",
   "--process": "Execute the deployment syncronously at the current project version",
   "--process <commit>": "Execute the deployment at a specific commit",
   "--process <rev>": "Execute a deployment pipeline at a specific branch reference",
@@ -19,7 +21,7 @@ const modeDescRec = {
 };
 const modeDescs = Object.entries(modeDescRec);
 const flagDescs = [
-  ["--debug / --verbose / -d", "Enable verbose mode of the deployment manager"],
+  ["--debug / --verbose / -d", "Enable verbose mode (prints more logs)"],
   ["--force / --yes / -y", "Force confirmations, automatically assuming yes "],
   ["--dry-run / --dry", "Simulate execution by not writing files and causing no side-effects"],
   ["--sync / --wait", "Execute child processes syncronously"],
@@ -60,7 +62,7 @@ export async function initHelp(options) {
   }
   console.log("");
   console.log(" Modes:");
-  const limit = options.debug ? modeDescs.length : 5;
+  const limit = options.debug ? modeDescs.length : 8;
   for (let i = 0; i < limit; i++) {
     const k = modeDescs[i];
     console.log(`\t${k[0].padEnd(pad)}${k[1]}`);

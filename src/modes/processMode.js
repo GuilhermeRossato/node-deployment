@@ -31,20 +31,25 @@ export async function initProcessor(options) {
   console.log("Started processor at", JSON.stringify(options.dir));
 
   const paths = await getInstancePathStatuses(options);
-  const oldInstancePath = paths.old.path||'';
+  const oldInstancePath = paths.old ? paths.old.path : "";
   const prevInstancePath = paths.prev.path;
   const currInstancePath = paths.curr.path;
   const nextInstancePath = paths.next.path;
-  
-  
+
   await waitForUniqueProcessor(paths.deploy.path, nextInstancePath);
   console.log("Waiting for unique processor finished");
 
   const execPurgeRes = await execPurge(oldInstancePath, prevInstancePath, currInstancePath, nextInstancePath);
   console.log(`execPurgeRes`, execPurgeRes);
 
-  const execCheckoutRes = await execCheckout(options.dir, nextInstancePath, options.ref);
-  console.log(`execCheckoutRes`, execCheckoutRes);
+  try {
+    const execCheckoutRes = await execCheckout(options.dir, nextInstancePath, options.ref);
+    console.log(`execCheckoutRes`, execCheckoutRes);
+  } catch (error) {
+    console.log(`Checkout step failed:`, error);
+    await sleep(500);
+    process.exit(1);
+  }
 
   const filesToCopy = (process.env.PIPELINE_STEP_COPY ?? "data,.env,node_modules,build").split(",");
   const execCopyRes = await execCopy(options.dir, nextInstancePath, filesToCopy);
@@ -135,7 +140,7 @@ async function execPurge(oldInstancePath, prevInstancePath, currInstancePath, ne
   const curr = currInstancePath && (await checkPathStatus(currInstancePath)).type.dir;
   const next = nextInstancePath && (await checkPathStatus(nextInstancePath)).type.dir;
 
-  if (old && prev) {
+  if (oldInstancePath && old && prev) {
     debugProcess && console.log("Removing old instance path", { oldInstancePath });
     const result = await executeProcessPredictably(`rm -rf "${oldInstancePath}"`, path.dirname(oldInstancePath), {
       timeout: 10_000,
@@ -146,7 +151,7 @@ async function execPurge(oldInstancePath, prevInstancePath, currInstancePath, ne
   if (prevInstancePath && prev) {
     debugProcess && console.log("Moving previous instance path to", oldInstancePath);
     const result = await executeProcessPredictably(
-      `mv -rf "${prevInstancePath}" "${oldInstancePath}"`,
+      `mv -f "${prevInstancePath}" "${oldInstancePath}"`,
       path.dirname(prevInstancePath),
       { timeout: 10_000 }
     );
@@ -394,7 +399,7 @@ async function execReplaceProjectServer(prevInstancePath, nextInstancePath, debu
         nextInstancePath,
       });
     }
-    console.log("Upgrade response", res);
-    return res;
+    console.log("Upgrade response:", res);
+    return;
   });
 }

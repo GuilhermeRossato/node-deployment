@@ -64,6 +64,9 @@ const modes = Object.keys(programEntryRecord);
  * @returns {(options: Options) => Promise<void>}
  */
 export function getInitForMode(mode = "setup") {
+  if (mode === "runtime") {
+    mode = "logs";
+  }
   if (!programEntryRecord[mode]) {
     throw new Error(`Invalid mode: ${JSON.stringify(mode)}`);
   }
@@ -105,6 +108,12 @@ export function parseProgramArgs(args = process.argv.slice(2), options = {}, rem
       debug && console.log("[Arg]", i, "set ", ["dry", arg]);
       continue;
     }
+    if (["--help", "-h", "--h", "--?", "-?", "\/?", "/?"].includes(arg)) {
+      indexes.mode = i;
+      options.mode = "help";
+      debug && console.log("[Arg]", i, "made", ["mode", options.mode]);
+      continue;
+    }
     const canBeMode = indexes.mode === undefined;
     if (
       (canBeMode || options.mode === "status") &&
@@ -128,6 +137,15 @@ export function parseProgramArgs(args = process.argv.slice(2), options = {}, rem
       indexes.restart = i;
       options.restart = true;
       debug && console.log("[Arg]", i, "set ", ["restart", arg]);
+      continue;
+    }
+    if (
+      (!options.mode || options.mode === "logs") &&
+      ["--instance", "--runtime", "--stream", "-app", "-ins"].includes(arg)
+    ) {
+      indexes.mode = i;
+      options.mode = "runtime";
+      debug && console.log("[Arg]", i, "made", ["mode", options.mode]);
       continue;
     }
     if (
@@ -186,16 +204,23 @@ export function parseProgramArgs(args = process.argv.slice(2), options = {}, rem
       debug && console.log("[Arg]", i, "set ", ["dir", options.dir]);
       continue;
     }
-    if (indexes.mode === undefined) {
-      const mode = arg.replace(/\W/g, "").toLowerCase();
-      const match = modes.find((k) => k.substring(0, 4).toLowerCase() === mode.substring(0, 4));
-      indexes.mode = i;
-      if (match && options.mode !== match) {
-        indexes.mode = i;
+    const letters = arg.replace(/\W/g, "").toLowerCase();
+    const match = modes.find((k) => (letters === 'l' && k === 'logs') || (letters === 's' && k === 'status') || k.substring(0, 4).toLowerCase() === letters.substring(0, 4));
+    if (
+      match &&
+      (indexes.mode === undefined ||
+        (options.mode === "runtime" && match === "logs") ||
+        (options.mode === "logs" && match === "runtime") ||
+        match === options.mode)
+    ) {
+      if (options.mode === "runtime" || match === "runtime") {
+        options.mode = "runtime";
+      } else {
         options.mode = match;
-        options.debug && console.log("[Arg]", i, "set ", ["mode", options.mode], "from", arg);
-        continue;
       }
+      indexes.mode = i;
+      options.debug && console.log("[Arg]", i, "set ", ["mode", options.mode], "from", arg);
+      continue;
     }
     if (indexes.dir === undefined && !arg.startsWith("-") && !arg.startsWith("refs/heads/")) {
       indexes.dir = i;

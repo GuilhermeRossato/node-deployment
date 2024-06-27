@@ -4,9 +4,16 @@ import getDateTimeString from "../utils/getDateTimeString.js";
 import { checkPathStatus } from "../utils/checkPathStatus.js";
 
 export async function getLogFileStatus(root, mode) {
-  let deploy = await checkPathStatus([root, process.env.DEPLOYMENT_FOLDER_NAME || process.env.LOG_FOLDER_NAME || "deployment"]);
+  let deploy = await checkPathStatus([
+    root,
+    process.env.DEPLOYMENT_FOLDER_NAME || process.env.LOG_FOLDER_NAME || "deployment",
+  ]);
   if (!deploy.type.dir) {
-    deploy = await checkPathStatus([root, ".git", process.env.DEPLOYMENT_FOLDER_NAME || process.env.LOG_FOLDER_NAME || "deployment"]);
+    deploy = await checkPathStatus([
+      root,
+      ".git",
+      process.env.DEPLOYMENT_FOLDER_NAME || process.env.LOG_FOLDER_NAME || "deployment",
+    ]);
   }
   if (!deploy.type.dir) {
     throw new Error(`Deployment folder not found at ${JSON.stringify(deploy.path)}`);
@@ -17,6 +24,8 @@ export async function getLogFileStatus(root, mode) {
   const name = `${mode}.log`;
   return await checkPathStatus([deploy.path, name]);
 }
+
+const extra = getDateTimeString(new Date(), true).substring(24);
 
 function separateLogLineDate(line) {
   if (!line.trim().length || !line.startsWith("2")) {
@@ -33,7 +42,7 @@ function separateLogLineDate(line) {
   const timeStr = line.substring(dateTimeSep + 1, dateSrcSep);
   const srcStr = line.substring(dateSrcSep + 3, srcPidStep);
   const pidStr = line.substring(srcPidStep + 3, pidTxtStep);
-  const time = new Date(getDateTimeString(`${dateStr} ${timeStr}`, true)).getTime();
+  const time = new Date(`${dateStr} ${timeStr} ${extra}`).getTime();
   if (srcPidStep === -1 || !pidStr.length || /\D/g.test(pidStr)) {
     return { time, src: "", pid: 0, text: line.substring(dateSrcSep + 3).trim() };
   }

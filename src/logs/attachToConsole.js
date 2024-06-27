@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import getDateTimeString from "../utils/getDateTimeString.js";
+import { getCurrentStackList } from "./getCurrentStackList.js";
 
 let addSource = true;
 let addPid = true;
@@ -31,7 +32,6 @@ export function configLog(source, pid, date, hour, prefix) {
  */
 export default function attachToConsole(method = "log", logFilePath = "", hidePrefix = false) {
   const originalMethod = console[method].bind(console);
-
   let inside = false;
   const handleCall = (...args) => {
     if (inside) {
@@ -45,7 +45,7 @@ export default function attachToConsole(method = "log", logFilePath = "", hidePr
         args.unshift(`${process.pid} -`);
       }
       if (addSource) {
-        const stackFileList = new Error("a").stack
+        let stackFileList = new Error("a").stack
           .split("\n")
           .map((a) =>
             a
@@ -55,12 +55,24 @@ export default function attachToConsole(method = "log", logFilePath = "", hidePr
           )
           .filter((a) => (a.includes(".js:") || a.includes(".cjs:")) && !a.includes(attachToConsole.name));
         let src = stackFileList.slice(0, 1).reverse().join(" -> ");
+
+        if (src.startsWith("node-deploy.cjs:")) {
+          const list = getCurrentStackList().filter(
+            (a) => !a.source.includes(attachToConsole.name) && !a.source.includes(getCurrentStackList.name) && !a.method.includes(handleCall.name)
+          );
+          src = list
+            .map((p) => p.method)
+            .slice(0, 1)
+            .reverse()
+            .join(" -> ");
+        }
         if (!src) {
           src = "?";
         }
         pcount++;
         args.unshift(`${addDate || addHour ? "- " : ""}${src} -`);
       }
+
       const [date, hour] = getDateTimeString().substring(0, 23).split(" ");
       if (addHour) {
         pcount++;

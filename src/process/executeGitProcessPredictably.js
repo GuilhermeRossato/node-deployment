@@ -81,7 +81,7 @@ export async function executeGitProcessPredictably(cmd, repoPath = "") {
   }
   // console.log("Executing git command at", JSON.stringify(repoPath));
   const result = await executeProcessPredictably(cmd.trim(), repoPath, {
-    timeout: 3000,
+    timeout: 10_0000,
     throws: true,
     shell: true,
   });
@@ -89,7 +89,7 @@ export async function executeGitProcessPredictably(cmd, repoPath = "") {
     throw new Error(`Unexpected git exit (code ${result.exit}): ${JSON.stringify(result)}`);
   }
   if (typeof result.output !== "string" && !result.output) {
-    result.output = '';
+    result.output = "";
   }
   if (typeof result.output !== "string") {
     throw new Error(`Unexpected git output (exit code ${result.exit}): ${JSON.stringify(result)}`);

@@ -54,17 +54,19 @@ The [post-update](https://git-scm.com/docs/githooks) hook is configured to begin
 
     --help / -h           Display help text
     --setup               Initialize and setup a project for automatic deployment (default)
-    --config              Change settings and configure projects interactively
-    --status              Retrieve status information from the manager process
-    --logs                Print the latest log data continuously
+    --config              Change settings and configure a project interactively
+    --status / -s         Retrieve status information from the manager process
+    --logs / -l           Print the latest log data continuously
+    --instance / --app    Stream logs from the project instance process
     --start / --restart   Start or restart the manager process and display its status
-    --shutdown            Stop the instance manager process from executing
+    --shutdown            Stop the project instance process and the instance manager process
+    --upgrade <path>      Fetch the deployment script source and write to a target file
 
-The "--status" mode can be combined with "--restart" to restart the manager process or with "--start" to start it only if it is not running.
+The "--status" mode can be combined with "--restart" to restart the manager process. You can also use "--start" to only start the process if it is not running.
 
 ## Flags
 
-    --debug / --verbose / -d   Enable debug / verbose mode and prints more logs during execution
+    --debug / --verbose / -d   Enable verbose mode (prints more logs)
     --force / --yes / -y       Force confirmations, automatically assuming yes
     --dry-run / --dry          Simulate execution by not writing files and causing no side-effects
     --sync / --wait            Execute child processes syncronously
@@ -81,7 +83,7 @@ The "--status" mode can be combined with "--restart" to restart the manager proc
 
 ## Tips
 
-If you have SSH access you can send the deployment script from the client to the server with `scp` and execute it directly:
+If you have SSH access you can send and execute the deployment script from the server with `scp`:
 
 ```bash
 wget https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/index.js -O node-deploy.cjs
