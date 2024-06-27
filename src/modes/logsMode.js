@@ -10,12 +10,12 @@ export async function initLogs(options) {
   await sleep(200);
   process.stdout.write("\n");
   await sleep(200);
-  const names = options.mode === "runtime" ? ["instance"] : [];
-  const logs = await getLastLogs(names);
+  const prefixes = options.mode === "runtime" ? ["instance"] : [];
+  const logs = await getLastLogs(prefixes);
   if (logs.names.length === 0) {
     console.log("Could not find any log file");
   } else {
-    process.stdout.write(` Loaded logs from ${logs.names.length} files of ${JSON.stringify(logs.projectPath)}`);
+    process.stdout.write(`Loaded ${logs.names.length} log files from ${JSON.stringify(logs.projectPath)}`);
     process.stdout.write("\n");
     const header = "     log-file          yyyy-mm-dd hh:mm:ss        source - pid - text...      ";
     process.stdout.write(`${"-".repeat(header.length)}\n`);
@@ -35,10 +35,10 @@ export async function initLogs(options) {
   }
   if (options.debug) {
     console.log("");
-    if (names.length) {
-      console.log("Filters  :", JSON.stringify(names));
+    if (prefixes.length) {
+      console.log("Filters  :", JSON.stringify(prefixes));
     }
-    console.log("Current  :", getDateTimeString(new Date().getTime()), `(${logs.names.length} log files)`);
+    console.log("Current  :", getDateTimeString(new Date().getTime()));
     console.log("Last log :", getDateTimeString(cursor), `(${getIntervalString(new Date().getTime() - cursor)} ago)`);
     if (list.length) {
       console.log("Last file:", JSON.stringify(list[list.length - 1].file), "from pid", list[list.length - 1].pid);
@@ -52,14 +52,14 @@ export async function initLogs(options) {
   await sleep(200);
   process.stdout.write("\n");
   await sleep(200);
-  await streamStatusLogs(cursor, true, names);
+  await streamStatusLogs(cursor, true, prefixes);
 }
 
-export async function streamStatusLogs(cursor = 0, continuous = true, names) {
+export async function streamStatusLogs(cursor = 0, continuous = true, prefixes = []) {
   let lastPrint = new Date().getTime();
   for (let cycle = 0; true; cycle++) {
     await sleep(300);
-    const all = await getLastLogs(names);
+    const all = await getLastLogs(prefixes);
     const list = all.list.filter((l) => l.time > cursor);
     if (list.length === 0) {
       await sleep(300);

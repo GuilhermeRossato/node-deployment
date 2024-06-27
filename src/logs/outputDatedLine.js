@@ -35,11 +35,15 @@ export function outputDatedLine(prefix, date, ...args) {
 }
 
 export function outputLogEntry(prefix, obj) {
-  if (process.stdout && process.stdout.columns >= 60) {
+  if (obj.pid && process.stdout && process.stdout.columns >= 60) {
     const right = `PID: ${obj.pid.toString()}`;
     const s = process.stdout.columns - right.length - 2;
     process.stdout.write(`${" ".repeat(s) + right}\r`);
   }
-  outputDatedLine(`[${prefix}]`, obj.time, " " + obj.src, "-", obj.pid.toString(), "-", obj.text);
+  if (!obj.src && !obj.pid) {
+    outputDatedLine(`[${prefix}]`, obj.time, obj.text);
+  } else {
+    outputDatedLine(`[${prefix}]`, obj.time, ` ${obj.src}`, "-", obj.pid.toString(), "-", obj.text);
+  }
   return obj.time;
 }

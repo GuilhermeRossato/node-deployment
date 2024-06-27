@@ -16,9 +16,10 @@ import { isProcessRunningByPid } from "../process/isProcessRunningByPid.js";
  */
 export async function initScheduler(options) {
   const debug = options.debug;
-  const logs = await getLastLogs();
+  const logs = await getLastLogs(["proc"]);
   const list = logs.list.filter((f) => ["proc"].includes(path.basename(f.file).substring(0, 4)));
-  console.log(`Scheduling script started for ${JSON.stringify(logs.projectPath)}`, debug ? "in debug mode" : "");
+  const cwd = logs.projectPath || options.dir || process.cwd();
+  console.log(`Scheduling script started for ${JSON.stringify(cwd)}`, debug ? "in debug mode" : "");
 
   let cursor = 0;
   const last = list[list.length - 1];
@@ -54,7 +55,6 @@ export async function initScheduler(options) {
     console.log("There are no processor log files");
   }
 
-  const cwd = logs.projectPath;
   const program = process.argv[0];
   const script = path.resolve(process.argv[1]);
 

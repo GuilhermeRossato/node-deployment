@@ -25,7 +25,7 @@ attachToConsole(
     ? path.resolve(
         process.cwd(),
         process.env.LOG_FOLDER_NAME || process.env.DEPLOYMENT_FOLDER_NAME || "deployment",
-        `${["instance", "runtime"].includes(parsed.options.mode) ? "logs" : parsed.options.mode}.log`
+        `${["runtime"].includes(parsed.options.mode) ? "logs" : parsed.options.mode}.log`
       )
     : "",
   ["help", "logs", "runtime"].includes(parsed.options.mode)
@@ -93,7 +93,7 @@ if (["status", "logs", "runtime", "schedule", "process", "manager"].includes(par
   if (!parsed.options.dir || parsed.options.dir !== info.path) {
     // parsed.options.debug && console.log("Current project path is", parsed.options.dir);
     parsed.options.dir = info.path;
-    //parsed.options.debug && console.log("Updated project path is", info.path);
+    parsed.options.debug && console.log("Updated project path is", info.path);
   }
   process.chdir(path.resolve(info.path));
 }

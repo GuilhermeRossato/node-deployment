@@ -51,8 +51,8 @@ export async function initProcessor(options) {
     process.exit(1);
   }
 
-  const filesToCopy = (process.env.PIPELINE_STEP_COPY ?? "data,.env,node_modules,build").split(",");
-  const execCopyRes = await execCopy(options.dir, nextInstancePath, filesToCopy);
+  const filesToCopy = (process.env.PIPELINE_STEP_COPY ?? ".env,node_modules").split(",");
+  const execCopyRes = await execCopy(options.dir, currInstancePath, nextInstancePath, filesToCopy);
   console.log(`execCopyRes`, execCopyRes);
 
   const isInstallEnabled = process.env.PIPELINE_STEP_INSTALL !== "off" && process.env.PIPELINE_STEP_INSTALL !== "0";
@@ -245,38 +245,68 @@ async function execCheckout(repositoryPath, nextInstancePath, ref) {
   }
 }
 
-async function execCopy(repositoryPath, nextInstancePath, files = ["data", ".env", "node_modules", "build"]) {
-  if (!(await checkPathStatus(repositoryPath)).type.dir) {
-    console.log("Skipping copy because instance folder was not found at", JSON.stringify(repositoryPath));
+async function execCopy(
+  repositoryPath,
+  currInstancePath,
+  nextInstancePath,
+  files = ["data", ".env", "node_modules", "build"]
+) {
+  const repo = await checkPathStatus(repositoryPath);
+  const curr = await checkPathStatus(currInstancePath);
+  const next = await checkPathStatus(nextInstancePath);
+  if (!repo.type.dir) {
+    throw new Error(`Repository path not found at copy step: ${JSON.stringify(repositoryPath)}`);
+  }
+  if (!curr.type.dir || !next.type.dir) {
+    console.log(
+      "Skipping copy step because a instance folder was not found:",
+      JSON.stringify({ currInstancePath, nextInstancePath })
+    );
     return;
   }
-  console.log("Executing copy");
-  for (const file of files) {
-    const source = path.resolve(repositoryPath, file);
-    const s = await asyncTryCatchNull(fs.promises.stat(source));
-    if (!(s instanceof fs.Stats)) {
-      console.log("Skipped copy of not found:", file);
+  const sourceList = await Promise.all(files.map((f) => checkPathStatus([currInstancePath, f])));
+  const targetList = await Promise.all(files.map((f) => checkPathStatus([nextInstancePath, f])));
+  if (sourceList.every((s) => !s.type.file && !s.type.dir)) {
+    console.log(
+      "Skipping copy step because there are no source files that exist at:",
+      JSON.stringify(currInstancePath)
+    );
+    return;
+  }
+  console.log("Executing copy step");
+  for (let i = 0; i < sourceList.length; i++) {
+    const s = sourceList[i];
+    const t = targetList[i];
+    if (s.type.file) {
+      console.log("Copying folder from", files[i]);
+    } else if (s.type.dir) {
+      if (t.type.file) {
+        const a = await fs.promises.readFile(s.path, 'utf-8');
+        const b = await fs.promises.readFile(t.path, 'utf-8');
+        if (a === b) {
+          console.log("Skipping unchanged", files[i]);
+        }
+      }
+      console.log("Copying file from", files[i]);
+    } else {
+      console.log("Skipping not found", files[i]);
       continue;
     }
-    if (s.isDirectory()) {
-      console.log("Copying folder", file, "...");
-    } else if (s.isFile()) {
-      console.log("Copying file", file, "...");
-    }
-    const target = path.resolve(nextInstancePath, file);
-    const t = await asyncTryCatchNull(fs.promises.stat(target));
-    if (s.isFile() && t) {
-      console.log("Removing existing target before coping:", file);
-      const result = await executeProcessPredictably(`rm -rf "${target}"`, path.dirname(nextInstancePath), {
+    if (t.type.file || t.type.dir) {
+      console.log("Removing existing target before coping:", JSON.stringify(t.path));
+      const result = await executeProcessPredictably(`rm -rf "${t.path}"`, t.parent, {
         timeout: 10_000,
       });
       if (result.error || result.exit !== 0) {
-        throw new Error(`Failed to remove existing copy target: ${JSON.stringify({ result })}`);
+        throw new Error(`Failed to remove existing copy target: ${JSON.stringify(result)}`);
       }
     }
-    const result = await executeProcessPredictably(`cp -r "${source}" "${target}"`, repositoryPath, {
+    const result = await executeProcessPredictably(`cp -r "${s.path}" "${t.path}"`, repositoryPath, {
       timeout: 10_000,
     });
+    if (result.error || result.exit !== 0) {
+      throw new Error(`Failed to copy from ${JSON.stringify(s.path)} to ${JSON.stringify(t.path)}: ${JSON.stringify(result)}`);
+    }
     console.log({ result });
   }
 }
@@ -399,7 +429,10 @@ async function execReplaceProjectServer(prevInstancePath, nextInstancePath, debu
         nextInstancePath,
       });
     }
-    console.log("Upgrade response:", res);
+    console.log("Manager process upgrade response:");
+    for (const line of JSON.stringify(res, null, "  ").split("\n")) {
+      console.log(line);
+    }
     return;
   });
 }

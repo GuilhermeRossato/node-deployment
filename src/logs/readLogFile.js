@@ -33,16 +33,19 @@ function separateLogLineDate(line) {
   }
   const dateTimeSep = line.indexOf(" ");
   const dateSrcSep = line.indexOf(" - ", dateTimeSep);
-  const srcPidStep = line.indexOf(" - ", dateSrcSep + 3);
-  if (dateTimeSep !== 10 || dateSrcSep === -1 || srcPidStep === -1) {
+  if (dateTimeSep !== 10 || dateSrcSep === -1) {
     return null;
   }
-  const pidTxtStep = line.indexOf(" - ", srcPidStep + 3);
   const dateStr = line.substring(0, dateTimeSep);
   const timeStr = line.substring(dateTimeSep + 1, dateSrcSep);
+  const time = new Date(`${dateStr} ${timeStr} ${extra}`).getTime();
+  const srcPidStep = line.indexOf(" - ", dateSrcSep + 3);
+  if (srcPidStep === -1) {
+    return { time, src: "", pid: 0, text: line.substring(dateSrcSep + 3).trim() };
+  }
+  const pidTxtStep = line.indexOf(" - ", srcPidStep + 3);
   const srcStr = line.substring(dateSrcSep + 3, srcPidStep);
   const pidStr = line.substring(srcPidStep + 3, pidTxtStep);
-  const time = new Date(`${dateStr} ${timeStr} ${extra}`).getTime();
   if (srcPidStep === -1 || !pidStr.length || /\D/g.test(pidStr)) {
     return { time, src: "", pid: 0, text: line.substring(dateSrcSep + 3).trim() };
   }

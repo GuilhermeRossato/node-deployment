@@ -7,11 +7,12 @@ import { loadEnvSync } from "../utils/loadEnvSync.js";
 import recursivelyIterateDirectoryFiles from "../utils/recursivelyIterateDirectoryFiles.js";
 
 /**
- * @param {string[]} prefixes File name prefix list
+ * @param {string[]} prefixes File name prefix list to filter
+ * @param {string[]} names
  * @param {Buffer[]} buffers
  * @param {number} size
  */
-export async function getLastLogs(prefixes = [], buffers = [], size = 4096) {
+export async function getLastLogs(prefixes = [], names = [], buffers = [], size = 4096) {
   const { options } = getParsedProgramArgs(false);
   let status = await checkPathStatus(options.dir || process.cwd());
   // inside deployment folder
@@ -55,10 +56,10 @@ export async function getLastLogs(prefixes = [], buffers = [], size = 4096) {
       status = inside;
     }
   }
-  return await getProjectRepoLogs(status.path, prefixes, buffers, size);
+  return await getProjectRepoLogs(status.path, prefixes, names, buffers, size);
 }
 
-async function getProjectRepoLogs(projectPath, names = [], buffers = [], size = 4096) {
+async function getProjectRepoLogs(projectPath, prefixes = [], names = [], buffers = [], size = 4096) {
   const root = `${path.resolve(projectPath)}/`;
   const unfiltered = await getProjectRepoLogsFiles(projectPath);
 
@@ -67,7 +68,7 @@ async function getProjectRepoLogs(projectPath, names = [], buffers = [], size = 
       .map((n) => n.substring(n.lastIndexOf("/") + 1, n.includes(".") ? n.lastIndexOf(".") : n.length))
       .join("");
 
-  const bases = names.map((n) => getBase(n));
+  const bases = prefixes.map((n) => getBase(n));
 
   const fileList = unfiltered.filter((f) => {
     if (!bases.length) {
@@ -83,7 +84,9 @@ async function getProjectRepoLogs(projectPath, names = [], buffers = [], size = 
   const list = [];
   for (let i = 0; i < fileList.length; i++) {
     const logName = fileList[i].path.substring(root.length);
-    names[i] = logName;
+    if (!names.includes(logName)) {
+      names.push(logName);
+    }
     const result = await readLogFile(fileList[i].path, -size, buffers[i]);
     if (!buffers[i]) {
       buffers[i] = result.buffer;
@@ -109,6 +112,7 @@ async function getProjectRepoLogs(projectPath, names = [], buffers = [], size = 
     list: list.sort((a, b) => a.time - b.time),
     buffers,
     names,
+    prefixes,
     projectPath,
   };
 }

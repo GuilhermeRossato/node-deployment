@@ -159,7 +159,7 @@ async function startInstanceChild(hash = "") {
     type = `${prefix.substring(prefix.lastIndexOf("/") + 1)} command`;
   }
   console.log("Instance command type:", JSON.stringify(type));
-  const logs = await getLogFileStatus([path.dirname(paths.deploy.path), "instance"]);
+  const logs = await getLogFileStatus(path.dirname(paths.deploy.path), "instance");
   if (!logs.parent) {
     console.log("Creating instance log folder at:", JSON.stringify(path.dirname(logs.path)));
     await fs.promises.mkdir(path.dirname(logs.path), { recursive: true });
@@ -205,7 +205,8 @@ async function startInstanceChild(hash = "") {
     });
     const persistData = (data) => {
       try {
-        logs.path && fs.appendFileSync(logs.path, data);
+        const text = data.toString().split('\n').map(a => getDateTimeString() + ' - ' + a).join('\n');
+        logs.path && fs.appendFileSync(logs.path, text, 'utf-8');
       } catch (err) {
         console.log("Failed to write to log file at", JSON.stringify(logs.path), ":", err);
         logs.path = "";

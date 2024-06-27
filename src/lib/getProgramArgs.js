@@ -108,7 +108,7 @@ export function parseProgramArgs(args = process.argv.slice(2), options = {}, rem
       debug && console.log("[Arg]", i, "set ", ["dry", arg]);
       continue;
     }
-    if (["--help", "-h", "--h", "--?", "-?", "\/?", "/?"].includes(arg)) {
+    if (["--help", "-h", "--h", "--?", "-?", "/?", "/?"].includes(arg)) {
       indexes.mode = i;
       options.mode = "help";
       debug && console.log("[Arg]", i, "made", ["mode", options.mode]);
@@ -141,7 +141,7 @@ export function parseProgramArgs(args = process.argv.slice(2), options = {}, rem
     }
     if (
       (!options.mode || options.mode === "logs") &&
-      ["--instance", "--runtime", "--stream", "-app", "-ins"].includes(arg)
+      ["--runtime", "--instance", "--app", "--ins", "--stream", "-app", "-ins"].includes(arg)
     ) {
       indexes.mode = i;
       options.mode = "runtime";
@@ -205,7 +205,12 @@ export function parseProgramArgs(args = process.argv.slice(2), options = {}, rem
       continue;
     }
     const letters = arg.replace(/\W/g, "").toLowerCase();
-    const match = modes.find((k) => (letters === 'l' && k === 'logs') || (letters === 's' && k === 'status') || k.substring(0, 4).toLowerCase() === letters.substring(0, 4));
+    const match = modes.find(
+      (k) =>
+        (letters === "l" && k === "logs") ||
+        (letters === "s" && k === "status") ||
+        k.substring(0, 4).toLowerCase() === letters.substring(0, 4)
+    );
     if (
       match &&
       (indexes.mode === undefined ||

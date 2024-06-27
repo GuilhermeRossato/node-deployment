@@ -68,14 +68,16 @@ export async function initConfig(options) {
   console.log("Updating path to:", targetPath);
   process.chdir(targetPath);
   options.dir = targetPath;
-  console.log("Verifying hash...");
+  console.log("Verifying repository commit data...");
   const commitData = await getRepoCommitData(targetPath);
   options.debug &&
     console.log(
-      "[debug] Hash result:",
-      commitData,
-      `(${getIntervalString(new Date().getTime() - commitData.date.getTime())} ago)`
+      "Last commit was",
+      `${getIntervalString(new Date().getTime() - commitData.date.getTime())} ago`,
+      `(at ${getDateTimeString(commitData.date)})`
     );
+  delete commitData.date;
+  options.debug && console.log("Last commit data:", commitData);
   if (commitData.error) {
     console.log(
       `Last commit check failed: ${
@@ -103,10 +105,10 @@ export async function initConfig(options) {
     options.debug && console.log("Requesting manager process status...");
     offline = res.error && res.stage === "network";
   }
-  if (offline && options.mode === "setup") {
-  }
   console.log("Manager process response:");
-  console.log(res);
+  for (const line of JSON.stringify(res, null, "  ").split("\n")) {
+    console.log(line);
+  }
   intPause();
 }
 

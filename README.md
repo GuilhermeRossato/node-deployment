@@ -13,15 +13,15 @@ An interactive setup process guides the user to configure the repository of a pr
 
 ## Usage
 
-The source file `node-deploy.cjs` from this project can be executed direcly with Node.js to begin configuring your projects with it.
+The `node-deploy.cjs` script can be executed direcly with Node.js to begin configuring your project. It can be found here: [node-deploy.cjs](./node-deploy.cjs), it is a standalone Node.js script generated from the bundling process of this project (with `npm run build`).
 
-You can download it manually from the [releases](https://github.com/GuilhermeRossato/node-deployment/releases) page or automatically fetch and execute it with this command:
+You can download it from the [releases](https://github.com/GuilhermeRossato/node-deployment/releases) page or use this command to fetch and execute it direcly:
 
 ```bash
 node -e "fetch('https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deploy.cjs').then(r=>r.text()).then(t=>new Function(t)()).catch(console.log))"
 ```
 
-The [node-deploy.cjs](./node-deploy.cjs) script is a standalone Node.js script generated from the build process of this project (`npm run build`). You can also download the script with curl/wget/node:
+You can also download it with curl / wget / node:
 
 ```bash
 curl -o node-deploy.cjs https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deploy.cjs
@@ -46,7 +46,7 @@ The [post-update](https://git-scm.com/docs/githooks) hook (configured by this sc
 
 ## Setup
 
-The setup mode is the default program mode and it alows the user to configure or create a repository to store a project's git data (commits, branches, etc). It also creates a `deployment` folder data related to deployment such as logs, status, process ids, scripts, and backups.
+The setup mode is the default program mode and it prompts the user to configure a repository, it can also create the git bare repository to store the project's git data (commits, branches, etc). To initialize a repository it creates a `deployment` folder inside the repo to store logs, status, process ids, scripts, and backups.
 
 The [post-update](https://git-scm.com/docs/githooks) hook is configured to begin the deployment process when commits are pushed to the repository. Pipelines start creating a new release folder at (`./deployment/upcoming-instance`) and processing it until its content are ready to replace the project instance folder (`./deployment/current-instance/`). The contents of the instance previously in executing are moved to `./deployment/previous-instance` and can be used to restore the version by moving it back to its original location.
 
@@ -54,15 +54,15 @@ The [post-update](https://git-scm.com/docs/githooks) hook is configured to begin
 
     --help / -h           Display help text
     --setup               Initialize and setup a project for automatic deployment (default)
-    --config              Change settings and configure a project interactively
+    --config              Change settings and reconfigure projects
     --status / -s         Retrieve status information from the manager process
-    --logs / -l           Print the latest log data continuously
-    --instance / --app    Stream logs from the project instance process
+    --logs / -l           Print and stream logs continuously
+    --runtime / --app     Only stream logs from the project instance process
     --start / --restart   Start or restart the manager process and display its status
-    --shutdown            Stop the project instance process and the instance manager process
+    --shutdown / --stop   Stop the project instance process and the instance manager process
     --upgrade <path>      Fetch the deployment script source and write to a target file
 
-The "--status" mode can be combined with "--restart" to restart the manager process. You can also use "--start" to only start the process if it is not running.
+The "--status" mode can be combined with "--restart" to restart the manager process and "--start" to only start the process if it is not running.
 
 ## Flags
 
@@ -91,7 +91,7 @@ scp ./node-deploy.cjs [username]@[hostname]:~/Downloads/node-deploy.cjs
 ssh [username]@[hostname] "node ~/Downloads/node-deploy.cjs"
 ```
 
-New repositores can be cloned from remote git repositores with `git clone ssh://[[username]]@[[hostname]]:[[port]]/[[git-bare-path]]` and existing repositories can be configured to pull (fetch) and to push (submit) changes to a remote server with git:
+New repositores can be cloned from remote git repositores with `git clone ssh://[[username]]@[[hostname]]:[[port]]/[[git-bare-path]]` and existing repositories can be configured to fetch and submit (pull and push) changes to a remote server with git:
 
 ```bash
 git remote set-url --pull origin ssh://[[username]]@[[hostname]]:[[port]]/[[git-bare-path]]
@@ -104,9 +104,9 @@ This project handles repositories with [git](https://git-scm.com/book/en/v2/Gett
 
 ## Objective
 
-I created to help bootstrap new self-hosted projects to private servers so that I could quickly validate new frameworks and experiment with mockups.
+I created to help bootstrap new self-hosted projects to private servers to quickly validate new frameworks and to experiment with small projects.
 
-Running a production environment with CI/CD requires multiple steps which are easy to get wrong and hard to debug (low observability). This script organize the most common CI/CD process for modern Node.js projects (and can be adapted easily to others) by creating repositories, seting up hooks, managing processes, automatic restarts, logging, etc, and new project versions replace the executing process transparently when everything goes right.
+Running a production environment with CI/CD requires multiple time-consuming steps that are hard to debug. This script organize the most common CI/CD process for modern Node.js projects (and can be adapted easily to others) by creating repositories, seting up hooks, managing processes, automatic restarts, logging, etc, and new project versions replace the executing process transparently when everything goes right.
 
 I wanted to get a deeper understanding of how CI/CD works by implementing it and dealing with its complexities: In professional development I've used enterprise services like [Github Actions](https://docs.github.com/en/actions), [Bitbucket Pipelines](https://bitbucket.org/product/features/pipelines) and [Google App Engine](https://cloud.google.com/build/docs/deploying-builds/deploy-appengine) and they are amazing for development and have great features, the only downside is that they are either slow, expensive, or unflexible.
 
