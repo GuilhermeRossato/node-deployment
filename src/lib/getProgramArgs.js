@@ -161,8 +161,11 @@ export function parseProgramArgs(args = process.argv.slice(2), options = {}, rem
       continue;
     }
     if (!options.ref && ["schedule", "process"].includes(options.mode || "") && i - 1 === indexes.mode) {
-      const argExists = arg.includes("~") ? false : fs.existsSync(path.resolve(options.dir || process.cwd(), arg));
-      if (!argExists || arg.toLowerCase() === "head") {
+      let isRef = !arg.includes('.') && !arg.includes('!') && (arg.startsWith("refs/") || arg.startsWith("HEAD"));
+      if (!isRef && fs.existsSync(path.resolve(options.dir || process.cwd(), arg))) {
+        isRef = true;
+      }
+      if (isRef) {
         indexes.ref = i;
         options.ref = arg;
         debug && console.log("[Arg]", i, "set ", ["ref", options.ref]);
