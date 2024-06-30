@@ -9,7 +9,7 @@
 This project configures a project to automatically process deployment when it receive updates, performing steps such as instalation of dependencies, building, execution of scripts (testing), etc. Successfull deployments replace the instance process with the new version.
 </h4>
 
-An interactive setup process guides the user to configure the repository of a project to perform deployment, it also starts and manages the long-running instance process, restarting it when new versions are available. It supports reconfiguration, log streaming, and displaying of status.
+An interactive setup process guides the user to configure the repository of a project to perform deployment, it also starts and manages the long-running instance process, restarting it when new versions are available. It supports reconfiguration, log streaming, and displaying status.
 
 ## Usage
 
