@@ -95,6 +95,17 @@ if (["status", "logs", "runtime", "schedule", "process", "manager"].includes(par
     parsed.options.dir = info.path;
     parsed.options.debug && console.log("Updated project path is", info.path);
   }
+  const local = loadEnvSync([cfg.parent, cfg.path, path.resolve(cfg.path, deployName)], {});
+  for (const key in local) {
+    if (process.env[key] === local[key]) {
+      continue;
+    }
+    if (!local[key] && local[key] !== "0") {
+      continue;
+    }
+    //console.log("Updating", key, "from", process.env[key], "to", local[key]);
+    process.env[key] = local[key];
+  }
   process.chdir(path.resolve(info.path));
 }
 
