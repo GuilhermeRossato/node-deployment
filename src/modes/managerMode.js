@@ -17,6 +17,7 @@ import { getIntervalString } from "../utils/getIntervalString.js";
 import { getRepoCommitData } from "../lib/getRepoCommitData.js";
 import { executeProcessPredictably } from "../process/executeProcessPredictably.js";
 import { getInstancePathStatuses } from "../lib/getInstancePathStatuses.js";
+let lastPid = 0;
 let instancePath = "";
 let terminating = false;
 let stopping = false;
@@ -167,7 +168,7 @@ async function startInstanceChild(hash = "") {
   console.log(logs.type.file ? "Existing" : "Target", "log file path:", JSON.stringify(logs.path));
   await new Promise((resolve, reject) => {
     console.log("Starting instance process:", cmd.includes('"') || cmd.includes("\\") ? cmd : cmd.split(" "));
-    console.log("Instance path:", curr.path);
+    console.log("Instance path:", JSON.stringify(curr.path));
     child = child_process.spawn(cmd, {
       cwd: curr.path,
       stdio: ["ignore", "pipe", "pipe"],
@@ -182,18 +183,19 @@ async function startInstanceChild(hash = "") {
     child.on("spawn", () => {
       console.log("Instance process spawned");
       instancePath = curr.path;
+      lastPid = child.pid;
       pidContents = child.pid.toString();
       writePidFile("instance", pidContents);
       setTimeout(() => {
         resolve();
-      }, 1000);
+      }, 750);
     });
     child.on("exit", async (code) => {
       console.log("Instance process exited with code:", code);
       if (pidContents) {
         try {
           const read = await readPidFile("instance");
-          if (read.pid.toString() === pidContents) {
+          if ((read.pid || 0).toString() === pidContents) {
             console.log("Removing instance pid file at " + read.path);
             await fs.promises.unlink(read.path);
           }
@@ -205,8 +207,12 @@ async function startInstanceChild(hash = "") {
     });
     const persistData = (data) => {
       try {
-        const text = data.toString().split('\n').map(a => getDateTimeString() + ' - ' + a).join('\n');
-        logs.path && fs.appendFileSync(logs.path, text, 'utf-8');
+        const text = data
+          .toString()
+          .split("\n")
+          .map((a) => getDateTimeString() + " - " + a)
+          .join("\n");
+        logs.path && fs.appendFileSync(logs.path, text, "utf-8");
       } catch (err) {
         console.log("Failed to write to log file at", JSON.stringify(logs.path), ":", err);
         logs.path = "";
@@ -356,7 +362,7 @@ async function handleRequest(url, method, data) {
         return { success: false, reason: `Failed at termination: ${err.message}`, stack: err.stack };
       }
     }
-    const nextPath = data.nextInstancePath;
+    const nextPath = data ? data.nextInstancePath : null;
     if (nextPath) {
       const next = await checkPathStatus(nextPath);
       console.log("New instance version requested for", JSON.stringify(next.name));
@@ -371,24 +377,32 @@ async function handleRequest(url, method, data) {
       }
     }
     console.log("Spawning instance process...");
+    let status = "";
     const promise = startInstanceChild();
     promise
       .then((r) => {
+        status = "resolved";
         console.log("Child spawn result", r);
       })
       .catch((e) => {
+        status = "failed";
         console.log("Child spawn error", e);
       });
-    await sleep(1000);
+    await sleep(1100);
+    if (status !== "") {
+      console.log("Instance process", status, "imediately after spawn");
+    }
     const logs = await getLastLogs(["instance"]);
     const pres = await getRunningChildInstanceProcess();
-    const runs = pres.pid ? await isProcessRunningByPid(pres.pid) : false;
-    console.log("Verifying instance pid from", pres.source, ":", pres.pid, runs ? "(running)" : "(not running)");
+    const pid = pres.pid || lastPid;
+    const runs = pid ? await isProcessRunningByPid(pid) : false;
+    console.log("Verifying instance pid from", JSON.stringify(pres.source), runs ? "(running)" : "(not running)");
     return {
       success: true,
-      reason: "Started instance folder",
-      pid: pres.pid,
-      logs: logs.list,
+      reason: `${url === "/api/restart" ? "Restarted" : "Started"} instance process`,
+      running: runs,
+      pid,
+      logs: logs.list.slice(Math.max(0, logs.list.length - 30)).map((a) => `${getDateTimeString(a.time)} ${a.text}`),
     };
   }
   if (url === "/api/logs") {
@@ -396,6 +410,8 @@ async function handleRequest(url, method, data) {
     const list = logs.list.map((a) => ({
       ...a,
       time: undefined,
+      src: a.src ? a.src : undefined,
+      pid: a.pid ? a.pid : undefined,
       date: getDateTimeString(new Date(a.time)),
       file: path.basename(a.file),
     }));
@@ -427,6 +443,8 @@ async function handleRequest(url, method, data) {
     const list = logs.list.map((a) => ({
       ...a,
       time: undefined,
+      src: a.src ? a.src : undefined,
+      pid: a.pid ? a.pid : undefined,
       date: getDateTimeString(new Date(a.time)),
       file: path.basename(a.file),
     }));
@@ -446,6 +464,7 @@ async function handleRequest(url, method, data) {
         status: pread.running ? "in-progress" : "idle",
         path: logs.projectPath,
         logs: dLogs.slice(Math.max(0, dLogs.length - 3)),
+        uptime: getIntervalString(process.uptime() * 1000),
       },
     };
   }
@@ -459,7 +478,6 @@ async function getRunningChildInstanceProcess() {
     if (isChildRunning) {
       return { pid: child.pid, source: "child-instance" };
     }
-
     const read = await readPidFile("instance");
     const isPidFileRunning =
       read && read.pid && typeof read.pid === "number" && (await isProcessRunningByPid(read.pid));

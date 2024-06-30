@@ -144,41 +144,43 @@ async function execPurge(oldInstancePath, prevInstancePath, currInstancePath, ne
     debugProcess && console.log("Removing old instance path", { oldInstancePath });
     const result = await executeProcessPredictably(`rm -rf "${oldInstancePath}"`, path.dirname(oldInstancePath), {
       timeout: 10_000,
+      shell: true,
     });
     console.log(result);
   }
 
-  if (prevInstancePath && prev) {
-    debugProcess && console.log("Moving previous instance path to", oldInstancePath);
+  if (prevInstancePath && oldInstancePath && prev) {
+    debugProcess && console.log("Moving previous instance path", oldInstancePath);
+    await sleep(500);
     const result = await executeProcessPredictably(
       `mv -f "${prevInstancePath}" "${oldInstancePath}"`,
       path.dirname(prevInstancePath),
-      { timeout: 10_000 }
+      { timeout: 10_000, shell: true }
     );
     console.log(result);
   }
 
-  if (curr && prevInstancePath) {
+  if (curr && currInstancePath && prevInstancePath) {
     debugProcess && console.log("Copying current instance files to", prevInstancePath);
+    await sleep(500);
     const result = await executeProcessPredictably(
       `cp -rf "${currInstancePath}" "${prevInstancePath}"`,
       path.dirname(currInstancePath),
-      { timeout: 10_000 }
+      { timeout: 10_000, shell: true }
     );
     console.log(result);
   }
-  if (next) {
+  if (!next || !nextInstancePath) {
     return;
   }
-  if (nextInstancePath) {
-    debugProcess && console.log("Removing upcoming production folder", { nextInstancePath });
-  }
+  debugProcess && console.log("Removing upcoming production folder", { nextInstancePath });
+  await sleep(500);
   // Remove new production folder
   const result = await executeProcessPredictably(`rm -rf "${nextInstancePath}"`, path.dirname(nextInstancePath), {
     timeout: 10_000,
+    shell: true,
   });
   debugProcess && console.log("Removal of new production folder:", result);
-
   const newProdStat = await asyncTryCatchNull(fs.promises.stat(nextInstancePath));
   if (result.error || result.exit !== 0) {
     if (newProdStat) {
@@ -220,6 +222,7 @@ async function execCheckout(repositoryPath, nextInstancePath, ref) {
       // Create new production folder
       const result = await executeProcessPredictably(`mkdir "${nextInstancePath}"`, path.dirname(nextInstancePath), {
         timeout: 10_000,
+        shell: true,
       });
       if (result.error || result.exit !== 0) {
         throw new Error(
@@ -281,8 +284,8 @@ async function execCopy(
       console.log("Copying folder from", files[i]);
     } else if (s.type.dir) {
       if (t.type.file) {
-        const a = await fs.promises.readFile(s.path, 'utf-8');
-        const b = await fs.promises.readFile(t.path, 'utf-8');
+        const a = await fs.promises.readFile(s.path, "utf-8");
+        const b = await fs.promises.readFile(t.path, "utf-8");
         if (a === b) {
           console.log("Skipping unchanged", files[i]);
         }
@@ -296,6 +299,7 @@ async function execCopy(
       console.log("Removing existing target before coping:", JSON.stringify(t.path));
       const result = await executeProcessPredictably(`rm -rf "${t.path}"`, t.parent, {
         timeout: 10_000,
+        shell: true,
       });
       if (result.error || result.exit !== 0) {
         throw new Error(`Failed to remove existing copy target: ${JSON.stringify(result)}`);
@@ -303,9 +307,12 @@ async function execCopy(
     }
     const result = await executeProcessPredictably(`cp -r "${s.path}" "${t.path}"`, repositoryPath, {
       timeout: 10_000,
+      shell: true,
     });
     if (result.error || result.exit !== 0) {
-      throw new Error(`Failed to copy from ${JSON.stringify(s.path)} to ${JSON.stringify(t.path)}: ${JSON.stringify(result)}`);
+      throw new Error(
+        `Failed to copy from ${JSON.stringify(s.path)} to ${JSON.stringify(t.path)}: ${JSON.stringify(result)}`
+      );
     }
     console.log({ result });
   }
@@ -362,17 +369,15 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
   process.stdout.write("\n");
   if (result.error instanceof Error) {
     throw new Error(
-      `Failed with error while installing dependencies with "${cmd}": ${JSON.stringify(result.error.stack)}`
+      `Failed with error while installing dependencies with "${cmd}":\n${JSON.stringify(result.error.stack)}`
     );
   }
   if (result.error) {
-    throw new Error(`Failed with while installing dependencies with "${cmd}": ${JSON.stringify(result)}`);
+    throw new Error(`Failed with while installing dependencies with "${cmd}":\n${JSON.stringify(result)}`);
   }
   if (result.exit !== 0) {
     throw new Error(
-      `Failed with exit ${result.exit} while installing dependencies with "${cmd}": ${JSON.stringify({
-        result,
-      })}`
+      `Failed with exit ${result.exit} while installing dependencies with "${cmd}":\n${JSON.stringify(result)}`
     );
   }
   const stat = await asyncTryCatchNull(fs.promises.readFile(path.resolve(nextInstancePath, "node_modules")));
@@ -402,6 +407,7 @@ async function execScript(nextInstancePath, cmd = "", timeout = 60_000) {
   const result = await executeProcessPredictably(cmd, nextInstancePath, {
     timeout,
     output: (t) => process.stdout.write(t),
+    shell: true,
   });
   if (result.error || result.exit !== 0) {
     throw new Error(

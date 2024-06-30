@@ -11,6 +11,7 @@ import getDateTimeString from "../utils/getDateTimeString.js";
 import { getRepoCommitData } from "../lib/getRepoCommitData.js";
 import { getIntervalString } from "../utils/getIntervalString.js";
 import sleep from "../utils/sleep.js";
+import { executeGitProcessPredictably } from "../process/executeGitProcessPredictably.js";
 
 let canSkipConfirm = false;
 
@@ -70,21 +71,18 @@ export async function initConfig(options) {
   options.dir = targetPath;
   console.log("Verifying repository commit data...");
   const commitData = await getRepoCommitData(targetPath);
-  options.debug &&
-    console.log(
-      "Last commit was",
-      `${getIntervalString(new Date().getTime() - commitData.date.getTime())} ago`,
-      `(at ${getDateTimeString(commitData.date)})`
-    );
-  delete commitData.date;
-  options.debug && console.log("Last commit data:", commitData);
-  if (commitData.error) {
-    console.log(
-      `Last commit check failed: ${
-        commitData.error instanceof Error ? commitData.error.stack : JSON.stringify(commitData.error)
-      }`
-    );
+  if (commitData && commitData.error instanceof Error) {
+    console.log("Could not load repository data:", commitData.error.message);
     throw new Error("Failed while reading latest repository commit data");
+  } else {
+    options.debug &&
+      console.log(
+        "Last commit was",
+        `${getIntervalString(new Date().getTime() - commitData.date.getTime())} ago`,
+        `(at ${getDateTimeString(commitData.date)})`
+      );
+    delete commitData.date;
+    options.debug && console.log("Last commit data:", commitData);
   }
   options.debug && console.log("Requesting manager process status...");
   let res;
@@ -426,11 +424,11 @@ async function initializeGitRepositoryProject(targetPath, forceUpdate = false) {
     await executeWrappedSideEffect(
       "Initialize repository",
       async () => {
-        const result = await executeProcessPredictably("git init --bare", targetPath, { timeout: 2500 });
+        const result = await executeGitProcessPredictably("git init --bare", targetPath);
         if (result.exit !== 0 || result.error) {
           console.log("Git init failed with exit code", result.exit);
-          console.log(result.output);
-          throw new Error("Git init Failed");
+          console.log(result);
+          throw new Error("Git init failed");
         }
       },
       targetPath
@@ -637,15 +635,16 @@ async function initPostUpdateScript(targetPath) {
   }
   if (!updExists || (updExists && updOriginal.trim() !== updSource.trim())) {
     console.log(updExists ? "Updating" : "Creating", "post-update hook");
+    await sleep(400);
     await executeWrappedSideEffect(
       "Create and enable post-update hook",
       async (updateFilePath) => {
         await fs.promises.writeFile(updateFilePath, updSource, "utf-8");
         console.log("Created git hook file");
-        const result = await executeProcessPredictably(`chmod +x "${updateFilePath}"`, targetPath);
+        const result = await executeProcessPredictably(`chmod +x "${updateFilePath}"`, targetPath, { shell: true });
         if (result.exit !== 0 || result.error) {
           console.log("Updating execution permission of git hook failed with exit code", result.exit);
-          console.log(result.output ? result.output : result);
+          console.log(result);
           throw new Error("Updating execution permission of git hook failed");
         }
         console.log("Enabled git hook file");

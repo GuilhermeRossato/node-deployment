@@ -12,13 +12,13 @@ import { checkPathStatus } from "../utils/checkPathStatus.js";
  * @type {import("../lib/getProgramArgs.js").InitModeMethod}
  */
 export async function initStatus(options) {
-  let response;
+  let res;
 
   if (options.shutdown || options.restart) {
     console.log("Sending shutdown request...");
     await executeWrappedSideEffect("Spawn manager server", async () => {
-      response = await sendInternalRequest("manager", "shutdown");
-      options.debug && console.log("Shutdown response:", response);
+      res = await sendInternalRequest("manager", "shutdown");
+      options.debug && console.log("Shutdown response:", res);
     });
     if (options.shutdown && !options.start && !options.restart && options.mode !== "logs") {
       options.debug && console.log("Status script finished (after shutdown)");
@@ -52,15 +52,17 @@ export async function initStatus(options) {
   }
   if (read.running) {
     console.log("Requesting status from manager process server with pid", read.pid);
-    response = await sendInternalRequest("manager", "status");
-    if (response.error && response.stage === "network") {
+    res = await sendInternalRequest("manager", "status");
+    if (res.error && res.stage === "network") {
       console.log("Could not connect to internal manager process server");
-    } else if (response.error) {
+    } else if (res.error) {
       console.log("Failed to request from the internal manager process server:");
-      console.log(options.debug ? response : response.error);
+      console.log(options.debug ? res : res.error);
     } else {
-      console.log("Successfull status response:");
-      console.log(response);
+      console.log("Status response:");
+      for (const line of JSON.stringify(res, null, "  ").split("\n")) {
+        console.log(line);
+      }
     }
   } else {
     console.log("The manager process is not currently in execution");
@@ -68,21 +70,21 @@ export async function initStatus(options) {
       console.log("Attempting to start the manager process", options.sync ? "syncronously..." : "...");
       await spawnManagerProcess(options.debug, !options.sync);
       console.log("Spawn manager process resolved");
-      response = null;
+      res = null;
     } else {
       console.log('To start the manager process use the "--start" argument');
       console.log('You can also restart it with "--restart" or stop it with "--shutdown"');
       return;
     }
   }
-  if (!response) {
+  if (!res) {
     await sleep(300);
     console.log("Requesting status from the manager process again...");
     await sleep(300);
-    response = await sendInternalRequest("manager", "status");
-    console.log(response);
+    res = await sendInternalRequest("manager", "status");
+    console.log(res);
   }
-  if (response?.error && response.stage === "network") {
+  if (res?.error && res.stage === "network") {
     console.log("Could not connect to internal server (Manager server is offline)");
     await sleep(500);
     console.log("Loading latest manager process logs...");

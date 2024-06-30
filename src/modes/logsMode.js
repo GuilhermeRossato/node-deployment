@@ -39,9 +39,9 @@ export async function initLogs(options) {
       console.log("Filters  :", JSON.stringify(prefixes));
     }
     console.log("Current  :", getDateTimeString(new Date().getTime()));
-    console.log("Last log :", getDateTimeString(cursor), `(${getIntervalString(new Date().getTime() - cursor)} ago)`);
+    console.log("Last log :", getDateTimeString(cursor), `(updated ${getIntervalString(new Date().getTime() - cursor)} ago)`);
     if (list.length) {
-      console.log("Last file:", JSON.stringify(list[list.length - 1].file), "from pid", list[list.length - 1].pid);
+      console.log("Last file:", JSON.stringify(list[list.length - 1].file), "written by pid", list[list.length - 1].pid);
       console.log("");
     }
     await sleep(1000);

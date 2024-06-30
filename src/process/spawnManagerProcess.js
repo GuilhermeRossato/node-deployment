@@ -26,7 +26,7 @@ export async function spawnManagerProcess(debug = false, detached = true) {
     );
     await sleep(200);
     let i = Math.max(0, list.length - (debug ? 10 : 2));
-    process.stdout.write(`  Displaying ${list.length - i} logs:\n`);
+    process.stdout.write(`\n  Displaying ${list.length - i} logs:\n`);
     await sleep(200);
     process.stdout.write("\n");
     await sleep(200);
@@ -69,7 +69,7 @@ export async function spawnManagerProcess(debug = false, detached = true) {
   await Promise.all([exec, wait]);
   await sleep(200);
   process.stdout.write("\n");
-  console.log("Verifying if manager process started by requesting status");
+  console.log("Requesting status from manager process after spawning...");
   let success = false;
   for (let i = 0; i < 30 && !success; i++) {
     await sleep(200);

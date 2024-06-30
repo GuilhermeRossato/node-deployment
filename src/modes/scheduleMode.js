@@ -32,7 +32,7 @@ export async function initScheduler(options) {
     );
     await sleep(200);
     let i = Math.max(0, list.length - (debug ? 10 : 2));
-    process.stdout.write(`  Displaying ${list.length - i} logs:\n`);
+    process.stdout.write(`\n  Displaying ${list.length - i} logs:\n`);
     await sleep(200);
     process.stdout.write("\n");
     await sleep(200);
@@ -73,18 +73,21 @@ export async function initScheduler(options) {
   debug && console.log(`${options.sync ? "Syncronous" : "Detached"} processor execution args:`, args.slice(1));
 
   const exec = executeWrappedSideEffect('Spawning "--processor" child', async () => {
-    return await spawnChildScript(program, args, cwd, options.sync);
+    return await spawnChildScript(program, args, cwd, !options.sync);
   });
-  const wait = executeWrappedSideEffect('Waiting for "processor" logs', async () => {
-    return await waitForLogFileUpdate(cursor, [], ["proc"]);
-  });
-  await Promise.all([exec, wait]);
-  console.log("Schedule mode finished");
+  if (!options.sync) {
+    const wait = executeWrappedSideEffect('Waiting for "processor" logs', async () => {
+      return await waitForLogFileUpdate(cursor, [], ["proc"]);
+    });
+    await Promise.all([exec, wait]);
+    console.log("Schedule mode finished");
+  }
 }
 
 async function spawnChildScript(program, args, cwd, detached) {
   await sleep(500);
   return await executeProcessPredictably([program, ...args], cwd, {
     detached,
+    output: detached ? "inherit" : "accumulate",
   });
 }

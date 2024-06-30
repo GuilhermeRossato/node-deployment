@@ -38,19 +38,15 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
       ? "buffer"
       : config.output instanceof Function
       ? "function"
-      : config.output === "buffer" ||
-        config.output === "raw" ||
-        config.output === "binary"
+      : config.output === "buffer" || config.output === "raw" || config.output === "binary"
       ? "binary"
       : config.output === "pipe" || config.output === "inherit"
       ? "pipe"
       : config.output;
 
-  const shell =
-    (config.shell === undefined && cmd instanceof Array) ||
-    config.shell === true;
+  const shell = (config.shell === undefined && cmd instanceof Array) || config.shell === true;
 
-  const debug = config.debug;
+  const debug = true || config.debug;
   const isArray = cmd instanceof Array;
 
   debug &&
@@ -91,6 +87,8 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
     }
     return response;
   }
+  debug && console.log("Process cmd:", cmd);
+  debug && console.log("Process working directory:", cwd);
   const chunks = [];
   const type = await new Promise((resolve) => {
     let timer = null;
@@ -108,17 +106,9 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
 
       const onTimeout = () => {
         debug &&
-          console.log(
-            "Timeout elapsed on",
-            response.start ? "spawned" : "unspawned",
-            "child (after",
-            timeout,
-            "ms)"
-          );
+          console.log("Timeout elapsed on", response.start ? "spawned" : "unspawned", "child (after", timeout, "ms)");
         timer = null;
-        response.error = new Error(
-          `Child timeout (${response.start ? "after spawn" : "not spawned"})`
-        );
+        response.error = new Error(`Child timeout (${response.start ? "after spawn" : "not spawned"})`);
         resolve("timeout");
       };
 
@@ -142,8 +132,7 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
           response.error = err;
         }
         if (response.start) {
-          response.duration =
-            (new Date().getTime() - response.start.getTime()) / 1000;
+          response.duration = (new Date().getTime() - response.start.getTime()) / 1000;
         }
         resolve(response);
         return;
@@ -151,13 +140,7 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
 
       child.on("spawn", () => {
         response.start = new Date();
-        debug &&
-          console.log(
-            "Child",
-            child.pid,
-            "spawned at",
-            response.start.toISOString()
-          );
+        debug && console.log("Child", child.pid, "spawned at", response.start.toISOString());
       });
 
       child.on("error", (err) => {
@@ -169,8 +152,7 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
           response.error = err;
         }
         if (response.start) {
-          response.duration =
-            (new Date().getTime() - response.start.getTime()) / 1000;
+          response.duration = (new Date().getTime() - response.start.getTime()) / 1000;
         }
         debug && console.log("Child finished:", response);
         resolve("error");
@@ -184,8 +166,7 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
           timer = null;
         }
         if (response.start) {
-          response.duration =
-            (new Date().getTime() - response.start.getTime()) / 1000;
+          response.duration = (new Date().getTime() - response.start.getTime()) / 1000;
         }
         response.exit = code;
         if (!response.error && code !== 0) {
@@ -212,20 +193,12 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
 
       if (child.stdout && child.stdout.on) {
         child.stdout.on("data", (data) =>
-          handleOutput
-            ? handleOutput(
-                outputType === "binary" ? data : data.toString("utf-8")
-              )
-            : chunks.push(data)
+          handleOutput ? handleOutput(outputType === "binary" ? data : data.toString("utf-8")) : chunks.push(data)
         );
       }
       if (child.stderr && child.stderr.on) {
         child.stderr.on("data", (data) =>
-          handleOutput
-            ? handleOutput(
-                outputType === "binary" ? data : data.toString("utf-8")
-              )
-            : chunks.push(data)
+          handleOutput ? handleOutput(outputType === "binary" ? data : data.toString("utf-8")) : chunks.push(data)
         );
       }
     } catch (err) {
@@ -243,10 +216,7 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
   debug && console.log("Process finished type:", type);
   debug && console.log("Process handling response:", response);
   if (chunks.length) {
-    response.output =
-      outputType === "binary"
-        ? Buffer.concat(chunks)
-        : Buffer.concat(chunks).toString("utf-8");
+    response.output = outputType === "binary" ? Buffer.concat(chunks) : Buffer.concat(chunks).toString("utf-8");
   }
   if (response.error && config.throws) {
     throw response.error;

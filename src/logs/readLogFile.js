@@ -41,18 +41,18 @@ function separateLogLineDate(line) {
   const time = new Date(`${dateStr} ${timeStr} ${extra}`).getTime();
   const srcPidStep = line.indexOf(" - ", dateSrcSep + 3);
   if (srcPidStep === -1) {
-    return { time, src: "", pid: 0, text: line.substring(dateSrcSep + 3).trim() };
+    return { time, src: "", pid: 0, text: line.substring(dateSrcSep + 3) };
   }
   const pidTxtStep = line.indexOf(" - ", srcPidStep + 3);
   const srcStr = line.substring(dateSrcSep + 3, srcPidStep);
   const pidStr = line.substring(srcPidStep + 3, pidTxtStep);
   if (srcPidStep === -1 || !pidStr.length || /\D/g.test(pidStr)) {
-    return { time, src: "", pid: 0, text: line.substring(dateSrcSep + 3).trim() };
+    return { time, src: "", pid: 0, text: line.substring(dateSrcSep + 3) };
   }
   if (pidTxtStep === -1) {
-    return { time, src: "", pid: parseInt(pidStr), text: line.substring(srcPidStep + 3).trim() };
+    return { time, src: "", pid: parseInt(pidStr), text: line.substring(srcPidStep + 3) };
   }
-  return { time, src: srcStr, pid: parseInt(pidStr), text: line.substring(pidTxtStep + 3).trim() };
+  return { time, src: srcStr, pid: parseInt(pidStr), text: line.substring(pidTxtStep + 3) };
 }
 
 /**
@@ -68,9 +68,7 @@ export default async function readLogFile(filePath, offset, buffer) {
     buffer,
     offset,
     sizeDesc: "",
-    readTime: new Date().getTime(),
     updateTime: 0,
-    updateDesc: "",
     text: "",
   };
   const stat = await asyncTryCatchNull(fs.promises.stat(filePath));
@@ -80,18 +78,6 @@ export default async function readLogFile(filePath, offset, buffer) {
   const size = (result.size = stat.size);
   result.updateTime = stat.mtimeMs;
   const elapsed = new Date().getTime() - stat.mtimeMs;
-  const s = elapsed / 1000;
-  const elapsedStr = isNaN(elapsed)
-    ? "(never)"
-    : s <= 1
-    ? `${elapsed.toFixed(0)} ms`
-    : s <= 60
-    ? `${s.toFixed(1)} seconds`
-    : s <= 60 * 60
-    ? `${Math.floor(s / 60)} minutes and ${Math.floor(s % 1)} seconds`
-    : s <= 24 * 60 * 60
-    ? `${Math.floor(s / (60 * 60))}:${Math.floor(s / 60) % 1}:${Math.floor(s % 1)}`
-    : `${Math.floor(s / (24 * 60 * 60))} days and ${Math.floor(s / (60 * 60)) % 1} hours`;
 
   result.sizeDesc = isNaN(elapsed)
     ? "(no file)"
@@ -102,8 +88,6 @@ export default async function readLogFile(filePath, offset, buffer) {
     : size < 1024 * 1024
     ? `${(size / 1024).toFixed(1)} KB`
     : `${(size / (1024 * 1024)).toFixed(2)} MB`;
-
-  result.updateDesc = isNaN(elapsed) ? "(never)" : `${elapsedStr} ago (at ${stat.mtime.toISOString()})`;
 
   if (offset && offset >= stat.size) {
     result.offset = stat.size;

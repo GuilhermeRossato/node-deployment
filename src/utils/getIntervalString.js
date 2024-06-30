@@ -18,9 +18,9 @@ export function getIntervalString(ms) {
     return `${left}${m === 1 ? "1 minute" : `${m} minutes`} ${right}`;
   }
   if (h <= 24) {
-    return `${left}${h} hour${h === 1 ? "" : "s"} and ${m} minutes`;
+    return `${left}${h} hour${h === 1 ? "" : "s"} and ${m % 60} minute${m % 60 === 1 ? "" : "s"}`;
   }
   const days = Math.floor(s / (24 * 60 * 60));
-  const sufix = h === 0 ? "" : h === 1 ? "an 1 hour" : ` and ${h} hours`;
-  return `${left}${days} ${days === 1 ? "day" : "days"}${sufix}`;
+  const sufix = h % 24 === 0 ? "" : h % 24 === 1 ? " and 1 hour" : ` and ${h % 24} hours`;
+  return `${left}${days} day${days === 1 ? "" : "s"}${sufix}`;
 }
