@@ -162,12 +162,23 @@ async function execPurge(oldInstancePath, prevInstancePath, currInstancePath, ne
   }
 
   if (curr && currInstancePath && prevInstancePath) {
+    const g = await checkPathStatus([currInstancePath, ".git"]);
+    if (g && g.type.dir) {
+      debugProcess && console.log("Removing .git folder from current instance at:", JSON.stringify(g.path));
+      const result = await executeProcessPredictably(`rm -rf "${g.path}"`, path.dirname(currInstancePath), {
+        timeout: 20_000,
+        shell: true,
+      });
+      if (result.error || result.exit !== 0) {
+        console.log("Failed while removing git folder at:", JSON.stringify(g.path));
+      }
+    }
     debugProcess && console.log("Copying current instance files to", prevInstancePath);
     await sleep(500);
     const result = await executeProcessPredictably(
       `cp -rf "${currInstancePath}" "${prevInstancePath}"`,
       path.dirname(currInstancePath),
-      { timeout: 10_000, shell: true }
+      { timeout: 20_000, shell: true }
     );
     console.log(result);
   }
@@ -394,14 +405,32 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
   const result = await executeProcessPredictably(cmd, nextInstancePath, {
     timeout: 180_000,
     shell: true,
-    output: function onInstallData(d) {
+    output: function installOut(d) {
       if (d.endsWith("\n")) {
         d = d.substring(0, d.length - 1);
       }
       console.log(d);
     },
   });
+  const depPath = path.resolve(nextInstancePath, "node_modules");
   process.stdout.write("\n");
+  if (result.error instanceof Error && fs.existsSync(depPath)) {
+    console.log(`Failed for the first time while installing dependencies: ${JSON.stringify(result.error.stack)}`);
+
+    console.log("Removing existing node_modules folder at", JSON.stringify(depPath));
+    const res = await executeProcessPredictably(`rm -rf "${depPath}"`, nextInstancePath, {
+      timeout: 10_000,
+      shell: true,
+    });
+    if (res.error instanceof Error) {
+      throw new Error(
+        `Failed with error while removing existing node_modules with "${cmd}":\n${JSON.stringify(res.error.stack)}`
+      );
+    }
+    if (res.error) {
+      throw new Error(`Failed with while removing existing node_modules with "${cmd}":\n${JSON.stringify(res)}`);
+    }
+  }
   if (result.error instanceof Error) {
     throw new Error(
       `Failed with error while installing dependencies with "${cmd}":\n${JSON.stringify(result.error.stack)}`
@@ -415,7 +444,7 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
       `Failed with exit ${result.exit} while installing dependencies with "${cmd}":\n${JSON.stringify(result)}`
     );
   }
-  const stat = await asyncTryCatchNull(fs.promises.readFile(path.resolve(nextInstancePath, "node_modules")));
+  const stat = await asyncTryCatchNull(fs.promises.readFile(depPath));
   debugProcess &&
     console.log(
       "Installation finished",

@@ -1,4 +1,4 @@
-// Script built at 2024-07-03T19:01:07.840Z
+// Script built at 2024-07-03T20:29:36.189Z
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
@@ -2306,12 +2306,23 @@ async function execPurge(oldInstancePath, prevInstancePath, currInstancePath, ne
   }
 
   if (curr && currInstancePath && prevInstancePath) {
+    const g = await checkPathStatus([currInstancePath, ".git"]);
+    if (g && g.type.dir) {
+      debugProcess && console.log("Removing .git folder from current instance at:", JSON.stringify(g.path));
+      const result = await executeProcessPredictably(`rm -rf "${g.path}"`, path.dirname(currInstancePath), {
+        timeout: 20_000,
+        shell: true,
+      });
+      if (result.error || result.exit !== 0) {
+        console.log("Failed while removing git folder at:", JSON.stringify(g.path));
+      }
+    }
     debugProcess && console.log("Copying current instance files to", prevInstancePath);
     await sleep(500);
     const result = await executeProcessPredictably(
       `cp -rf "${currInstancePath}" "${prevInstancePath}"`,
       path.dirname(currInstancePath),
-      { timeout: 10_000, shell: true }
+      { timeout: 20_000, shell: true }
     );
     console.log(result);
   }
@@ -2538,14 +2549,32 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
   const result = await executeProcessPredictably(cmd, nextInstancePath, {
     timeout: 180_000,
     shell: true,
-    output: function onInstallData(d) {
+    output: function installOut(d) {
       if (d.endsWith("\n")) {
         d = d.substring(0, d.length - 1);
       }
       console.log(d);
     },
   });
+  const depPath = path.resolve(nextInstancePath, "node_modules");
   process.stdout.write("\n");
+  if (result.error instanceof Error && fs.existsSync(depPath)) {
+    console.log(`Failed for the first time while installing dependencies: ${JSON.stringify(result.error.stack)}`);
+
+    console.log("Removing existing node_modules folder at", JSON.stringify(depPath));
+    const res = await executeProcessPredictably(`rm -rf "${depPath}"`, nextInstancePath, {
+      timeout: 10_000,
+      shell: true,
+    });
+    if (res.error instanceof Error) {
+      throw new Error(
+        `Failed with error while removing existing node_modules with "${cmd}":\n${JSON.stringify(res.error.stack)}`
+      );
+    }
+    if (res.error) {
+      throw new Error(`Failed with while removing existing node_modules with "${cmd}":\n${JSON.stringify(res)}`);
+    }
+  }
   if (result.error instanceof Error) {
     throw new Error(
       `Failed with error while installing dependencies with "${cmd}":\n${JSON.stringify(result.error.stack)}`
@@ -2559,7 +2588,7 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
       `Failed with exit ${result.exit} while installing dependencies with "${cmd}":\n${JSON.stringify(result)}`
     );
   }
-  const stat = await asyncTryCatchNull(fs.promises.readFile(path.resolve(nextInstancePath, "node_modules")));
+  const stat = await asyncTryCatchNull(fs.promises.readFile(depPath));
   debugProcess &&
     console.log(
       "Installation finished",
@@ -4449,10 +4478,18 @@ if (["status", "logs", "runtime", "schedule", "process", "manager"].includes(par
   if (!parsed.options.dir || parsed.options.dir !== info.path) {
     // parsed.options.debug && console.log("Current project path is", parsed.options.dir);
     parsed.options.dir = info.path;
-    parsed.options.debug && console.log("Updated project path is", info.path);
+    parsed.options.debug && console.log("Updated project path:", info.path);
   }
 
-  const local = loadEnvSync([cfg.parent, cfg.path, cfg.parent ? path.resolve(cfg.parent, deployName) : '', cfg.path ? path.resolve(cfg.path, deployName) : ''], {});
+  const local = loadEnvSync(
+    [
+      cfg.parent,
+      cfg.path,
+      cfg.parent ? path.resolve(cfg.parent, deployName) : "",
+      cfg.path ? path.resolve(cfg.path, deployName) : "",
+    ],
+    {}
+  );
   const updated = [];
   for (const key in local) {
     if (process.env[key] === local[key]) {
@@ -4482,9 +4519,11 @@ if (!valid) {
   );
 } else if (parsed.remaining.length === 1) {
   console.log(`Invalid program argument: ${JSON.stringify(parsed.remaining[0])}`);
+  parsed.options.debug && console.log("Script args:", process.argv.slice(1));
   valid = false;
 } else if (parsed.remaining.length) {
   console.log(`Invalid program arguments: ${JSON.stringify(parsed.remaining)}`);
+  parsed.options.debug && console.log("Script args:", process.argv.slice(1));
   valid = false;
 }
 

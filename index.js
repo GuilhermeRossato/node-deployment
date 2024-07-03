@@ -93,10 +93,18 @@ if (["status", "logs", "runtime", "schedule", "process", "manager"].includes(par
   if (!parsed.options.dir || parsed.options.dir !== info.path) {
     // parsed.options.debug && console.log("Current project path is", parsed.options.dir);
     parsed.options.dir = info.path;
-    parsed.options.debug && console.log("Updated project path is", info.path);
+    parsed.options.debug && console.log("Updated project path:", info.path);
   }
 
-  const local = loadEnvSync([cfg.parent, cfg.path, cfg.parent ? path.resolve(cfg.parent, deployName) : '', cfg.path ? path.resolve(cfg.path, deployName) : ''], {});
+  const local = loadEnvSync(
+    [
+      cfg.parent,
+      cfg.path,
+      cfg.parent ? path.resolve(cfg.parent, deployName) : "",
+      cfg.path ? path.resolve(cfg.path, deployName) : "",
+    ],
+    {}
+  );
   const updated = [];
   for (const key in local) {
     if (process.env[key] === local[key]) {
@@ -126,9 +134,11 @@ if (!valid) {
   );
 } else if (parsed.remaining.length === 1) {
   console.log(`Invalid program argument: ${JSON.stringify(parsed.remaining[0])}`);
+  parsed.options.debug && console.log("Script args:", process.argv.slice(1));
   valid = false;
 } else if (parsed.remaining.length) {
   console.log(`Invalid program arguments: ${JSON.stringify(parsed.remaining)}`);
+  parsed.options.debug && console.log("Script args:", process.argv.slice(1));
   valid = false;
 }
 
