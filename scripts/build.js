@@ -115,7 +115,8 @@ async function init() {
     throw new Error("Could not find multiple files to join");
   }
   const filtered = uniques.filter((a) => a.fileName !== "asleep.js");
-  const text = await joinProcessedInputFiles(filtered);
+  let text = await joinProcessedInputFiles(filtered);
+  text = `// Script built at ${new Date().toISOString()}\n${text}`;
   await fs.promises.writeFile(path.resolve(root, "node-deploy.cjs"), text, "utf-8");
   if (process.argv.includes("--watch")) {
     console.log("Started watching", filtered.length, "source files for updates");

@@ -1,5 +1,5 @@
 import path from "node:path";
-import sendInternalRequest from "../lib/sendInternalRequest.js";
+import { sendInternalRequest } from "../lib/sendInternalRequest.js";
 import { spawnManagerProcess } from "../process/spawnManagerProcess.js";
 import { getLastLogs } from "../logs/getLastLogs.js";
 import { outputLogEntry } from "../logs/outputDatedLine.js";
@@ -18,7 +18,7 @@ export async function initStatus(options) {
     console.log("Sending shutdown request...");
     await executeWrappedSideEffect("Spawn manager server", async () => {
       res = await sendInternalRequest("manager", "shutdown");
-      options.debug && console.log("Shutdown response:", res);
+      options.debug && console.log("Status mode shutdown response:", res);
     });
     if (options.shutdown && !options.start && !options.restart && options.mode !== "logs") {
       options.debug && console.log("Status script finished (after shutdown)");

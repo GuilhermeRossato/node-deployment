@@ -2,7 +2,7 @@ import { getLastLogs } from "./getLastLogs.js";
 import { outputDatedLine } from "./outputDatedLine.js";
 import sleep from "../utils/sleep.js";
 
-const debug = false;
+const debugWaitForLog = false;
 
 export async function waitForLogFileUpdate(cursor = 0, pids = [], modes = []) {
   for (let cycle = 0; true; cycle++) {
@@ -10,18 +10,21 @@ export async function waitForLogFileUpdate(cursor = 0, pids = [], modes = []) {
     const next = await getLastLogs(modes);
     if (cycle === 0) {
       console.log(`Waiting for log updates (currently ${next.names.length} files matched modes)`);
-      debug && console.log("Mode filters:", modes);
-      debug && console.log("Previous pids:", pids);
-      debug && console.log("Cursor:", cursor);
+      debugWaitForLog && console.log("Mode filters:", modes);
+      debugWaitForLog && console.log("Previous pids:", pids);
+      debugWaitForLog && console.log("Cursor:", cursor);
     }
     const list = next.list.filter((l) => l.time > cursor);
     if (list.length === 0) {
       await sleep(200);
       continue;
     }
+    if (!pids || pids.length === 0 || cycle > 15) {
+      console.log("Log file updated:\n");
+    }
     for (let i = 0; i < list.length; i++) {
       const obj = list[i];
-      const prefix = obj.file[0].toUpperCase();
+      const prefix = obj.file;
       outputDatedLine(`[${prefix}]`, obj.time, obj.pid, obj.src, obj.text);
     }
     if (!pids || pids.length === 0 || cycle > 15) {
@@ -29,7 +32,7 @@ export async function waitForLogFileUpdate(cursor = 0, pids = [], modes = []) {
     }
     const novelPids = [...new Set(list.map((a) => a.pid).filter((p) => !pids.includes(p)))];
     if (novelPids.length) {
-      debug && console.log("New pid at logs:", novelPids);
+      debugWaitForLog && console.log("New pid at logs:", novelPids);
       return list;
     }
     continue;

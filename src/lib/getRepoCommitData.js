@@ -18,8 +18,12 @@ export async function getRepoCommitData(repositoryPath, ref) {
   return result;
 }
 export async function executeGitCheckout(repositoryPath, targetPath, ref = "") {
-  const cmd = `git --work-tree="${targetPath}" checkout -f${ref ? ` ${ref}` : ""}`;
-  const result = await executeGitProcessPredictably(cmd, repositoryPath);
+  const cmd = `git --work-tree="${repositoryPath}" checkout -f${ref ? ` ${ref}` : ""}`;
+  if (!fs.existsSync(targetPath)) {
+    console.log("Creating target directory at", JSON.stringify(targetPath));
+    await fs.promises.mkdir(targetPath, { recursive: true });
+  }
+  const result = await executeGitProcessPredictably(cmd, targetPath);
   return result;
 }
 

@@ -3,7 +3,7 @@ import path from "node:path";
 import { canExecuteSideEffects, executeWrappedSideEffect } from "../lib/executeWrappedSideEffect.js";
 import { executeProcessPredictably } from "../process/executeProcessPredictably.js";
 import { checkPathStatus } from "../utils/checkPathStatus.js";
-import sendInternalRequest from "../lib/sendInternalRequest.js";
+import { sendInternalRequest } from "../lib/sendInternalRequest.js";
 import { spawnManagerProcess } from "../process/spawnManagerProcess.js";
 import asyncTryCatchNull from "../utils/asyncTryCatchNull.js";
 import fetchProjectReleaseFileSource from "../lib/fetchProjectReleaseFileSource.js";
@@ -59,14 +59,14 @@ export async function initConfig(options) {
   let initialized = false;
   if (!status.type.proj) {
     console.log("Initializing project target:", targetPath);
-    await initializeGitRepositoryProject(targetPath, options.force);
+    await initializeGitRepositoryProject(targetPath, options.force, options);
     initialized = true;
     status = await checkPathStatus(targetPath);
     if (!status.type.proj) {
       console.log("Obs: Initializing project did not update status:", status.type);
     }
   }
-  console.log("Updating path to:", targetPath);
+  console.log("Updating path to:", targetPath, initialized ? '(after setup)': '');
   process.chdir(targetPath);
   options.dir = targetPath;
   console.log("Verifying repository commit data...");
@@ -397,7 +397,7 @@ async function interGetRepositoryPath(options) {
   return result;
 }
 
-async function initializeGitRepositoryProject(targetPath, forceUpdate = false) {
+async function initializeGitRepositoryProject(targetPath, forceUpdate = false, options) {
   const status = await checkPathStatus(targetPath);
   console.log(
     `Initializing ${status.type.bare ? "the" : status.type.dir ? "an existing" : "a new"} git repository named`,
@@ -511,7 +511,7 @@ async function initializeGitRepositoryProject(targetPath, forceUpdate = false) {
       }
     }
   }
-  await initializeConfigFile(targetPath);
+  await initializeConfigFile(targetPath, options);
   console.log(
     "Initialization of git repository finished for",
     JSON.stringify(path.basename(targetPath)),
@@ -524,17 +524,37 @@ async function initializeGitRepositoryProject(targetPath, forceUpdate = false) {
   }
 }
 
-async function initializeConfigFile(targetPath) {
-  const envPath = path.resolve(targetPath, process.env.DEPLOYMENT_FOLDER_NAME || "deployment", ".env");
-  const cfg = await checkPathStatus(envPath);
-  const text = cfg.type.file ? await fs.promises.readFile(envPath, "utf-8") : "";
-  const pairs = text
-    .split("\n")
-    .map((f) => (f.includes("=") ? f.trim() : ""))
-    .filter((f) => f.length)
-    .map((a) => [a.substring(0, a.indexOf("=")), a.substring(a.indexOf("=") + 1)]);
-
-  const names = [
+async function initializeConfigFile(targetPath, options) {
+  const envFilePath = path.resolve(targetPath, process.env.DEPLOYMENT_FOLDER_NAME || "deployment", ".env");
+  const cfg = await checkPathStatus(envFilePath);
+  const pairs = [];
+  let original = "";
+  if (cfg.type.file) {
+    console.log("Loading config file from", JSON.stringify(envFilePath));
+    original = await fs.promises.readFile(envFilePath, "utf-8");
+    original = original.trim();
+    const list = original
+      .split("\n")
+      .map((f) => (f.includes("=") ? f.trim() : ""))
+      .filter((f) => f.length)
+      .map((a) => [a.substring(0, a.indexOf("=")), a.substring(a.indexOf("=") + 1)]);
+    if (cfg.type.file) {
+      console.log("Loaded config file vars:", JSON.stringify(list.filter((f) => f[1].trim().length).map((a) => a[0])));
+    }
+    for (const [key, value] of list) {
+      if (!value) {
+        continue;
+      }
+      let pair = pairs.find((p) => p[0] === key);
+      if (pair) {
+        pair[1] = value;
+      } else {
+        pair = [key, value];
+        pairs.push(pair);
+      }
+    }
+  }
+  const envKeyList = [
     "LOG_FOLDER_NAME",
     "DEPLOYMENT_FOLDER_NAME",
     "OLD_INSTANCE_FOLDER_PATH",
@@ -547,57 +567,40 @@ async function initializeConfigFile(targetPath) {
     "PIPELINE_STEP_BUILD",
     "PIPELINE_STEP_TEST",
     "PIPELINE_STEP_START",
-    ...pairs.map((p) => p[0]),
   ];
-  const uniques = [...new Set(names)];
-  const vars = uniques.map((name) => {
-    const saved = (
-      pairs
-        .filter((p) => p[0] === name)
-        .map((p) => p[1])
-        .pop() || ""
-    ).trim();
-    const value = (process.env[name] || "").trim();
-    return {
-      name,
-      value,
-      saved,
-      same: value === saved,
-    };
-  });
-  const updates = vars.filter((f) => !f.same).map((a) => a.name);
-  if (updates.length === 0) {
-    return false;
+  for (const key of envKeyList) {
+    const value = process.env[key];
+    if (!value) {
+      continue;
+    }
+    let pair = pairs.find((p) => p[0] === key);
+    if (pair) {
+      pair[1] = value;
+    } else {
+      pair = [key, value];
+      pairs.push(pair);
+    }
   }
-  if (!vars.map((v) => v.name).includes("DEPLOYMENT_SETUP_DATE_TIME")) {
-    vars.push({
-      name: "DEPLOYMENT_SETUP_DATE_TIME",
-      value: new Date().toISOString(),
-      saved: "",
-      same: false,
-    });
-  }
-  console.log(
-    cfg.type.file ? "Existing" : "Missing",
-    "env config file of",
-    targetPath,
-    "has",
-    updates.length,
-    "differences"
-  );
+  console.log(cfg.type.file ? "Existing" : "Missing", "env config file of", targetPath, "has", pairs.length, "vars");
   const lines = [];
-  for (const { name, value } of vars) {
+  for (const [name, value] of pairs) {
     lines.push(`${name}=${value}`);
   }
-  const newText = lines.join("\n") + "\n";
-  console.log("Writing", newText.length, "chars to project config file (from", text.length, "chars)");
-  await executeWrappedSideEffect(`${cfg.type.file ? "Update" : "Create"} config file`, async () => {
-    await fs.promises.writeFile(envPath, newText, "utf-8");
-    console.log(
-      `${cfg.type.file ? "Updated" : "Created"} deployment config file "${path.basename(envPath)}" inside`,
-      JSON.stringify(path.dirname(envPath))
-    );
-  });
+
+  let text = lines.join("\n") + "\n";
+  if (options.port && !text.includes('INTERNAL_DATA_SERVER_PORT=')) {
+    console.log(`Adding the "port" parameter (${options.port}) to config`);
+    text = `${text}INTERNAL_DATA_SERVER_PORT=${options.port}\n`;
+  }
+  if (original === text) {
+    console.log("Maintaining the config file with", text.length, "bytes (no updates)");
+  } else {
+    console.log(cfg.type.file ? "Updating" : "Creating", "the config file at", envFilePath);
+    await executeWrappedSideEffect(`${cfg.type.file ? "Update" : "Create"} config file`, async () => {
+      await fs.promises.writeFile(envFilePath, text, "utf-8");
+      console.log(`${cfg.type.file ? "Updated" : "Created"} deployment config file at`, JSON.stringify(envFilePath));
+    });
+  }
   return true;
 }
 

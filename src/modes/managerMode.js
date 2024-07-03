@@ -9,7 +9,6 @@ import asyncTryCatchNull from "../utils/asyncTryCatchNull.js";
 import { writePidFile } from "../lib/readWritePidFile.js";
 import { killProcessByPid } from "../process/killProcessByPid.js";
 import { checkPathStatus } from "../utils/checkPathStatus.js";
-import { getParsedProgramArgs } from "../lib/getProgramArgs.js";
 import { getLogFileStatus } from "../logs/readLogFile.js";
 import { getLastLogs } from "../logs/getLastLogs.js";
 import getDateTimeString from "../utils/getDateTimeString.js";
@@ -17,6 +16,9 @@ import { getIntervalString } from "../utils/getIntervalString.js";
 import { getRepoCommitData } from "../lib/getRepoCommitData.js";
 import { executeProcessPredictably } from "../process/executeProcessPredictably.js";
 import { getInstancePathStatuses } from "../lib/getInstancePathStatuses.js";
+import { sendInternalRequest, getManagerHost } from "../lib/sendInternalRequest.js";
+import { getParsedProgramArgs } from "../lib/getProgramArgs.js";
+import { execProcCheckout } from "./processMode.js";
 let lastPid = 0;
 let instancePath = "";
 let terminating = false;
@@ -31,15 +33,49 @@ export async function initManager(options) {
   if (options.dry) {
     console.log('Warning: The manager process ignores the "dry" parameter');
   }
-  const host = process.env.INTERNAL_DATA_SERVER_HOST || "127.0.0.1";
-  const port = process.env.INTERNAL_DATA_SERVER_PORT || "49737";
-  console.log(`Creating internal server at http://${host}:${port}/...`);
-  await sleep(300);
+  const root = options.dir || process.cwd();
+  const deployFolderPath = path.resolve(root, process.env.DEPLOYMENT_FOLDER_NAME || 'deployment');
+  if (!fs.existsSync(deployFolderPath)) {
+    throw new Error(`Cannot start manager because deployment folder was not found at ${JSON.stringify(deployFolderPath)}`)
+  }
+  if (options.port && process.env.INTERNAL_DATA_SERVER_PORT !== options.port) {
+    process.env.INTERNAL_DATA_SERVER_PORT = options.port;
+    const envFilePath = path.resolve(deployFolderPath, '.env');
+    if (!fs.existsSync(envFilePath)) {
+      throw new Error(`Cannot start manager because config file was not found at ${JSON.stringify(envFilePath)}`);
+    }
+    let text = await fs.promises.readFile(envFilePath, 'utf-8');
+    if (!text.endsWith('\n')) {
+      text = `${text}\n`;
+    }
+    if (!text.includes('INTERNAL_DATA_SERVER_PORT=')) {
+      console.log(`Applying "port" parameter (${options.port}) to config file`);
+      text = `${text}INTERNAL_DATA_SERVER_PORT=${options.port}\n`;
+      if (!options.dry) {
+        await fs.promises.writeFile(envFilePath, text, 'utf-8');
+      }
+      console.log('Updated config file at:', JSON.stringify(envFilePath.replace(/\\/g, '/')));
+    }
+  }
+  const { host, port, hostname } = getManagerHost();
+  const verifyStatus = await sendInternalRequest(hostname, "status");
+  if (!verifyStatus.error) {
+    console.log("Existing manager script from", JSON.stringify(hostname), "already exists");
+    console.log("Existing manager replied:", JSON.stringify(verifyStatus));
+    await sleep(1000);
+    console.log("Will attempt to listen to", JSON.stringify(hostname), "even though it seems to exist");
+    await sleep(1000);
+    console.log(`Attempting to create internal server at ${JSON.stringify(hostname)}...`);
+    await sleep(1000);
+  } else {
+    console.log(`Creating internal server at ${JSON.stringify(hostname)}...`);
+    await sleep(300);
+  }
   try {
     const result = await createInternalServer(host, port, handleRequest);
     server = result.server;
   } catch (err) {
-    console.log(`Failed while creating internal server at http://${host}:${port}/`);
+    console.log(`Failed while creating internal server at ${JSON.stringify(hostname)}`);
     console.log(err);
     await sleep(300);
     process.exit(1);
@@ -74,10 +110,25 @@ export async function initManager(options) {
   const data = await getRepoCommitData(options.dir);
   if (data?.hash) {
     try {
-      console.log("Starting instance child at commit", data.hash);
-      const result = await startInstanceChild(data.hash);
-      console.log("Start instance child result:");
-      console.log(result);
+      console.log("Current child commit hash:", data.hash);
+      let paths = await getInstancePathStatuses();
+      const curr = paths.curr;
+      if (!curr || !curr.path) {
+        console.log(`Wont start current instance because it is invalid: ${JSON.stringify(curr)}`);
+      } else if (!curr.type.dir) {
+        console.log(`Wont start current instance because it does not exist at: ${JSON.stringify(curr.path)}`);
+      }
+      if (!curr || !curr.path || !curr.type.dir) {
+        console.log('Run deployer by pushing changes or by running this script with the "--processor" argument ');
+        console.log("Skipping instance initialization");
+      } else {
+        if (curr && curr.path && curr.type.dir) {
+          console.log("Starting instance child...");
+          const result = await startInstanceChild(data.hash);
+          console.log("Start instance child result:");
+          console.log(result);
+        }
+      }
     } catch (err) {
       console.log("Start instance child failed:");
       console.log(err);
@@ -89,16 +140,17 @@ export async function initManager(options) {
 }
 
 async function startInstanceChild(hash = "") {
-  const paths = await getInstancePathStatuses();
+  let paths = await getInstancePathStatuses();
   const curr = paths.curr;
-  if (!curr.path) {
-    throw new Error(`Failed to start instance because current folder is invalid: ${JSON.stringify(curr)}`);
-  }
-  if (!curr.type.dir) {
-    throw new Error(`Failed to start instance because instance folder does not exist at ${JSON.stringify(curr.path)}`);
-  }
-  if (!curr.children.length) {
-    throw new Error(`Failed to start instance because instance folder is empty at ${JSON.stringify(curr.path)}`);
+  if (!curr || !curr.path) {
+    console.log(`Wont start current instance because it is invalid: ${JSON.stringify(curr)}`);
+    throw new Error("Invalid current instance path");
+  } else if (!curr.type.dir) {
+    console.log(`Wont start current instance because it does not exist at: ${JSON.stringify(curr.path)}`);
+    throw new Error("Invalid current instance path");
+  } else if (!curr.children.length) {
+    console.log(`Wont start current instance because it is an empty directory at: ${JSON.stringify(curr.path)}`);
+    throw new Error("Invalid empty current instance path");
   }
   let main = "";
   let pkg = {};
@@ -205,6 +257,7 @@ async function startInstanceChild(hash = "") {
       }
       reject(new Error(`Child exited with code ${code}`));
     });
+    let isFirstData = true;
     const persistData = (data) => {
       try {
         const text = data
@@ -212,6 +265,13 @@ async function startInstanceChild(hash = "") {
           .split("\n")
           .map((a) => getDateTimeString() + " - " + a)
           .join("\n");
+        if (isFirstData) {
+          isFirstData = false;
+          const { options } = getParsedProgramArgs();
+          if (options.debug) {
+            console.log("Instance process first output:", text);
+          }
+        }
         logs.path && fs.appendFileSync(logs.path, text, "utf-8");
       } catch (err) {
         console.log("Failed to write to log file at", JSON.stringify(logs.path), ":", err);
@@ -247,15 +307,20 @@ async function handleUpgradeRequest(next) {
       console.log(result);
       await sleep(500);
     }
-    console.log("Moving current instance files to", bkpInstancePath);
+    console.log("Creating current instance backup from", paths.curr.path);
     process.stdout.write("\n");
     const result = await executeProcessPredictably(
       `mv -f "${paths.curr.path}" "${bkpInstancePath}"`,
       path.dirname(paths.curr.path),
       { timeout: 10_000, shell: true, output: "inherit" }
     );
+    console.log("Moved current instance to", bkpInstancePath);
     console.log(result);
     await sleep(500);
+  }
+  const verify = await checkPathStatus(paths.curr.path);
+  if (verify.type.dir) {
+    console.log("Current instance exists at", verify.path);
   }
   if (next.type.dir) {
     const cwd = path.dirname(paths.curr.path);
@@ -265,6 +330,7 @@ async function handleUpgradeRequest(next) {
     //console.log("Moving cwd:", cwd);
     process.stdout.write("\n");
     const result = await executeProcessPredictably(cmd, cwd, { timeout: 10_000, shell: true, output: "inherit" });
+    console.log("Move result");
     console.log(result);
     console.log(
       result.exit === 0 ? "Successfully" : "Failed to",
@@ -365,30 +431,41 @@ async function handleRequest(url, method, data) {
     const nextPath = data ? data.nextInstancePath : null;
     if (nextPath) {
       const next = await checkPathStatus(nextPath);
-      console.log("New instance version requested for", JSON.stringify(next.name));
-      if (next.type.dir && next.children.length) {
+      console.log(
+        `New instance request with path ${JSON.stringify(next.name)} ${next.type.dir ? "exists" : "does not exist"}`
+      );
+      if (!next.parent) {
+        console.log("The new instance path parent was not found at", JSON.stringify(next.path));
+        throw new Error("Could not upgrade instance");
+      } else if (!next.type.dir) {
+        console.log("The new instance path was not found at", JSON.stringify(next.name));
+        throw new Error("Could not upgrade instance");
+      } else if (!next.children.length) {
+        console.log("The new instance path is empty at", JSON.stringify(next.path));
+        throw new Error("Could not upgrade instance");
+      } else {
+        console.log("Upgrading instance from", JSON.stringify(next.path));
         try {
           await handleUpgradeRequest(next);
         } catch (err) {
           console.log("Failed while handling new instance version request:", err);
+          throw new Error("Could not upgrade instance");
         }
-      } else {
-        console.log("The new instance path was not found at", JSON.stringify(next.name));
       }
     }
     console.log("Spawning instance process...");
     let status = "";
-    const promise = startInstanceChild();
+    const promise = startInstanceChild(data?.nextInstancePath);
     promise
       .then((r) => {
         status = "resolved";
-        console.log("Child spawn result", r);
+        console.log("Instance spawn result", r);
       })
       .catch((e) => {
         status = "failed";
-        console.log("Child spawn error", e);
+        console.log("Instance spawn error", e);
       });
-    await sleep(1100);
+    await sleep(1000);
     if (status !== "") {
       console.log("Instance process", status, "imediately after spawn");
     }
@@ -450,9 +527,11 @@ async function handleRequest(url, method, data) {
     }));
     const iLogs = list.filter((f) => f.file.startsWith("instance"));
     const dLogs = list.filter((f) => !f.file.startsWith("instance"));
+    const { hostname } = getManagerHost();
     return {
       success: true,
       path: logs.projectPath,
+      hostname,
       instance: {
         pid: read.pid,
         status: read.running ? "running" : "not-running",

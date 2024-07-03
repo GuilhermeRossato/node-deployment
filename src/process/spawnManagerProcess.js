@@ -1,5 +1,5 @@
 import path from "path";
-import sendInternalRequest from "../lib/sendInternalRequest.js";
+import { sendInternalRequest } from "../lib/sendInternalRequest.js";
 import sleep from "../utils/sleep.js";
 import { waitForLogFileUpdate } from "../logs/waitForLogFileUpdate.js";
 import { executeProcessPredictably } from "./executeProcessPredictably.js";
@@ -13,16 +13,17 @@ import { isProcessRunningByPid } from "./isProcessRunningByPid.js";
 export async function spawnManagerProcess(debug = false, detached = true) {
   const logs = await getLastLogs(["mana"]);
   const list = logs.list.filter((f) => ["mana"].includes(path.basename(f.file).substring(0, 4)));
-  console.log(`Spawning manager script for ${JSON.stringify(logs.projectPath)}`, debug ? "in debug mode" : "");
+  console.log(`Spawning child manager script for ${JSON.stringify(logs.projectPath)}`, debug ? "in debug mode" : "");
 
   let cursor = 0;
   const last = list[list.length - 1];
   if (last) {
     cursor = last.time;
+    console.log(`Latest log file path updated: ${JSON.stringify(path.resolve(last.file).replace(/\\/g, "/"))}`);
     console.log(
-      `Latest log file "${path.basename(last.file)}" was updated ${getIntervalString(
-        new Date().getTime() - last.time
-      )} ago (at ${getDateTimeString(last.time)})`
+      `Latest log update was ${getIntervalString(new Date().getTime() - last.time)} ago (at ${getDateTimeString(
+        last.time
+      )})`
     );
     await sleep(200);
     let i = Math.max(0, list.length - (debug ? 10 : 2));
@@ -46,7 +47,7 @@ export async function spawnManagerProcess(debug = false, detached = true) {
       console.log("The process is executing at pid", last.pid);
     }
   } else {
-    console.log("There are no manager log files");
+    console.log("There are no previous manager log files");
   }
 
   const cwd = logs.projectPath;
@@ -106,7 +107,7 @@ export async function spawnManagerProcess(debug = false, detached = true) {
     }
   }
   if (!success) {
-    throw new Error("Failed during manager script start as status was not received");
+    throw new Error("Manager script could not be started: Status request not successfull");
   }
 }
 

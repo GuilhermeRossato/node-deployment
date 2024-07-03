@@ -70,6 +70,7 @@ The "--status" mode can be combined with "--restart" to restart the manager proc
     --force / --yes / -y       Force confirmations, automatically assuming yes
     --dry-run / --dry          Simulate execution by not writing files and causing no side-effects
     --sync / --wait            Execute child processes syncronously
+    --port <port>              Define the internal manager server port
 
 ## Advanced modes
 

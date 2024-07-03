@@ -21,6 +21,7 @@ import { initUpgrade } from "../modes/upgradeMode.js";
  * @property {string} mode - The program mode for the options
  * @property {string} ref - The version hash for deployment
  * @property {string} dir - The target project repository path
+ * @property {string} port - The port to use for the internal server
  */
 
 function getBaseProgramArgs() {
@@ -35,6 +36,7 @@ function getBaseProgramArgs() {
     mode: "",
     ref: "",
     dir: "",
+    port: "",
   };
 }
 
@@ -88,6 +90,14 @@ export function parseProgramArgs(args = process.argv.slice(2), options = {}, rem
       indexes.debug = i;
       options.debug = true;
       debug && console.log("[Arg]", i, "set ", ["debug", arg]);
+      continue;
+    }
+    if (indexes.port === undefined && ["--port", "--manager-port", "--mport", "--tcp", "-port"].includes(arg) && arg[i+1] && !/\D/g.test(arg[i+1])) {
+      indexes.port = i;
+      options.port = args[i+1];
+      debug && console.log("[Arg]", i, "prep", ["port", arg]);
+      debug && console.log("[Arg]", i, "set ", ["port", options.port]);
+      i++;
       continue;
     }
     if (indexes.force === undefined && ["--force", "--yes", "-y"].includes(arg)) {
@@ -162,8 +172,8 @@ export function parseProgramArgs(args = process.argv.slice(2), options = {}, rem
     }
     if (!options.ref && ["schedule", "process"].includes(options.mode || "") && i - 1 === indexes.mode) {
       let isRef = !arg.includes('.') && !arg.includes('!') && (arg.startsWith("refs/") || arg.startsWith("HEAD"));
-      if (!isRef && fs.existsSync(path.resolve(options.dir || process.cwd(), arg))) {
-        isRef = true;
+      if (!isRef && fs.existsSync(path.resolve(options.dir || process.cwd(), arg, 'config')) && fs.existsSync(path.resolve(options.dir || process.cwd(), arg, 'hooks'))) {
+        isRef = false;
       }
       if (isRef) {
         indexes.ref = i;
@@ -176,6 +186,8 @@ export function parseProgramArgs(args = process.argv.slice(2), options = {}, rem
         } else if (
           arg.length >= 6 &&
           arg.length <= 50 &&
+          !arg.includes("/") &&
+          !arg.includes("\\") &&
           !arg.includes(" ") &&
           !arg.includes("_") &&
           !arg.includes(".") &&

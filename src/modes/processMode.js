@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import sendInternalRequest from "../lib/sendInternalRequest.js";
+import { sendInternalRequest } from "../lib/sendInternalRequest.js";
 import asyncTryCatchNull from "../utils/asyncTryCatchNull.js";
 import sleep from "../utils/sleep.js";
 import { checkPathStatus } from "../utils/checkPathStatus.js";
@@ -10,6 +10,7 @@ import { executeWrappedSideEffect } from "../lib/executeWrappedSideEffect.js";
 import { executeProcessPredictably } from "../process/executeProcessPredictably.js";
 import { executeGitCheckout } from "../lib/getRepoCommitData.js";
 import { getInstancePathStatuses } from "../lib/getInstancePathStatuses.js";
+import { executeGitProcessPredictably } from "../process/executeGitProcessPredictably.js";
 const debugProcess = true;
 
 /**
@@ -43,7 +44,7 @@ export async function initProcessor(options) {
   console.log(`execPurgeRes`, execPurgeRes);
 
   try {
-    const execCheckoutRes = await execCheckout(options.dir, nextInstancePath, options.ref);
+    const execCheckoutRes = await execProcCheckout(options.dir, nextInstancePath, options.ref);
     console.log(`execCheckoutRes`, execCheckoutRes);
   } catch (error) {
     console.log(`Checkout step failed:`, error);
@@ -214,7 +215,7 @@ async function execPurge(oldInstancePath, prevInstancePath, currInstancePath, ne
   return true;
 }
 
-async function execCheckout(repositoryPath, nextInstancePath, ref) {
+export async function execProcCheckout(repositoryPath, nextInstancePath, ref) {
   debugProcess && console.log("Preparing checkout to", JSON.stringify(nextInstancePath));
   {
     const stat = await asyncTryCatchNull(fs.promises.stat(nextInstancePath));
@@ -234,14 +235,37 @@ async function execCheckout(repositoryPath, nextInstancePath, ref) {
     }
   }
   {
+    const b = await checkPathStatus(nextInstancePath);
     debugProcess && console.log("Executing checkout from", JSON.stringify(repositoryPath));
+    debugProcess && console.log("Before checkout file count:", b.children.length);
     const result = await executeGitCheckout(repositoryPath, nextInstancePath, ref);
     if (result.error || result.exit !== 0) {
-      throw new Error(
+      console.log(
         `Failed to checkout to new production folder: ${JSON.stringify({
           result,
         })}`
       );
+    }
+    const s = await checkPathStatus(nextInstancePath);
+    if (s.children.length) {
+      debugProcess && console.log("Checkout target root files:", s.children);
+    } else {
+      debugProcess && console.log("Checkout did not generate any file at", JSON.stringify(nextInstancePath));
+      debugProcess && console.log("Attempting git clone from:", JSON.stringify(repositoryPath));
+      const cmd = `git clone . ${nextInstancePath}`;
+      const result = await executeGitProcessPredictably(cmd, repositoryPath);
+      if (result.error || result.exit !== 0) {
+        throw new Error(
+          `Failed to clone during checkout to new production folder: ${JSON.stringify({
+            result,
+          })}`
+        );
+      }
+      const s = await checkPathStatus(nextInstancePath);
+      debugProcess && console.log("Clone target root files:", s.children);
+      if (!s.children.length) {
+        throw new Error(`Could not find any file inside ${JSON.stringify(s.path)}`);
+      }
     }
     debugProcess && console.log("Checkout successfull");
     return result;

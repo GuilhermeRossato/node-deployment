@@ -46,7 +46,7 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
 
   const shell = (config.shell === undefined && cmd instanceof Array) || config.shell === true;
 
-  const debug = true || config.debug;
+  const debug = config.debug;
   const isArray = cmd instanceof Array;
 
   debug &&
@@ -54,11 +54,12 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
       "Starting predictable process execution of",
       JSON.stringify(isArray ? cmd[0] : cmd.split(" ").shift()),
       "with args",
-      { timeout, throws, output: outputType, attached, shell }
+      { timeout, output: outputType, attached, shell },
+      throws ? "(throw mode)" : ""
     );
 
   /**
-   * @type {Awaited<ReturnType<executeProcessPredictably>>}
+   * @type {Awaited<ReturnType<typeof executeProcessPredictably>>}
    */
   const response = {};
   /** @type {any} */
@@ -88,9 +89,9 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
     return response;
   }
   debug && console.log("Process cmd:", cmd);
-  debug && console.log("Process working directory:", cwd);
+  debug && console.log("Process cwd:", cwd);
   const chunks = [];
-  const type = await new Promise((resolve) => {
+  const type = await new Promise(function spawnExecuteProcessPredictably(resolve) {
     let timer = null;
     try {
       debug &&
@@ -174,15 +175,6 @@ export async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
         }
         resolve(code);
       });
-
-      if (outputType !== "ignore" && child.stdout && child.stderr) {
-        const handleOutput = (data) => {
-          if (outputType === "buffer") {
-            chunks.push(data);
-          } else if (outputType === "function") {
-          }
-        };
-      }
 
       const handleOutput =
         outputType === "function" || outputType === "pipe"

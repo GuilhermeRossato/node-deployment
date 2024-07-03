@@ -1,12 +1,39 @@
+const debugReq = true;
+
+export function getManagerHost(target = "manager") {
+  let host = target === "manager" ? process.env.INTERNAL_DATA_SERVER_HOST || "127.0.0.1" : "127.0.0.1";
+  let port = target === "manager" ? process.env.INTERNAL_DATA_SERVER_PORT || "49737" : "49738";
+  let hostname = `http://${host}:${port}/`;
+  if (typeof target === "string" && (target.startsWith("http://") || target.startsWith("https://"))) {
+    debugReq && console.log("Request target hostname set to", JSON.stringify(target));
+    hostname = target;
+    const startHost = hostname.indexOf("//") + 2;
+    if (hostname.indexOf(":", 7) !== -1) {
+      host = hostname.substring(startHost, hostname.indexOf(":", 7));
+      port = hostname
+        .substring(hostname.indexOf(":", 7) + 1, hostname.indexOf("/", 7) + 1 || hostname.length)
+        .replace(/\D/g, "");
+    } else if (hostname.indexOf("/", 7) !== -1) {
+      host = hostname.substring(startHost, hostname.indexOf("/", 7));
+      port = "80";
+    } else {
+      host = hostname.substring(startHost, hostname.length);
+      port = "80";
+    }
+  }
+  if (!hostname.endsWith("/")) {
+    hostname = `${hostname}/`;
+  }
+  return { host, port, hostname };
+}
+
 /**
  * @param {string} target
  * @param {string} type
  * @param {any} data
  */
-export default async function sendInternalRequest(target = "manager", type = "", data = null) {
-  const host = target === "manager" ? process.env.INTERNAL_DATA_SERVER_HOST || "127.0.0.1" : "127.0.0.1";
-  const port = target === "manager" ? process.env.INTERNAL_DATA_SERVER_PORT || "49737" : "49738";
-  const hostname = `http://${host}:${port}/`;
+export async function sendInternalRequest(target = "manager", type = "", data = null) {
+  const { hostname } = getManagerHost(target);
   const url = `${hostname}api/${type}`;
   let stage = "start";
   let status = 0;

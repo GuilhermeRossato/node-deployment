@@ -41,9 +41,9 @@ export function outputLogEntry(prefix, obj) {
     process.stdout.write(`${" ".repeat(s) + right}\r`);
   }
   if (!obj.src && !obj.pid) {
-    outputDatedLine(`[${prefix}]`, obj.time, obj.text);
+    outputDatedLine(` [${prefix}]`, obj.time, obj.text);
   } else {
-    outputDatedLine(`[${prefix}]`, obj.time, ` ${obj.src}`, "-", obj.pid.toString(), "-", obj.text);
+    outputDatedLine(` [${prefix}]`, obj.time, ` ${obj.src}`, "-", obj.pid.toString(), "-", obj.text);
   }
   return obj.time;
 }

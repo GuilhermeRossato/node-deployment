@@ -25,10 +25,11 @@ export async function initScheduler(options) {
   const last = list[list.length - 1];
   if (last) {
     cursor = last.time;
+    console.log(`Latest log file path updated: ${JSON.stringify(path.resolve(last.file).replace(/\\/g, "/"))}`);
     console.log(
-      `Latest log file "${path.basename(last.file)}" was updated ${getIntervalString(
-        new Date().getTime() - last.time
-      )} ago (at ${getDateTimeString(last.time)})`
+      `Latest log update was ${getIntervalString(new Date().getTime() - last.time)} ago (at ${getDateTimeString(
+        last.time
+      )})`
     );
     await sleep(200);
     let i = Math.max(0, list.length - (debug ? 10 : 2));

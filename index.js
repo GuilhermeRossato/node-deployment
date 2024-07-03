@@ -95,7 +95,9 @@ if (["status", "logs", "runtime", "schedule", "process", "manager"].includes(par
     parsed.options.dir = info.path;
     parsed.options.debug && console.log("Updated project path is", info.path);
   }
-  const local = loadEnvSync([cfg.parent, cfg.path, path.resolve(cfg.path, deployName)], {});
+
+  const local = loadEnvSync([cfg.parent, cfg.path, cfg.parent ? path.resolve(cfg.parent, deployName) : '', cfg.path ? path.resolve(cfg.path, deployName) : ''], {});
+  const updated = [];
   for (const key in local) {
     if (process.env[key] === local[key]) {
       continue;
@@ -103,10 +105,21 @@ if (["status", "logs", "runtime", "schedule", "process", "manager"].includes(par
     if (!local[key] && local[key] !== "0") {
       continue;
     }
-    //console.log("Updating", key, "from", process.env[key], "to", local[key]);
+    if ((key === "DEPLOYMENT_FOLDER_NAME" || key === "LOG_FOLDER_NAME") && local[key] === "deployment") {
+      process.env[key] = local[key];
+      continue;
+    }
+    updated.push(`Env "${key}" set to ${JSON.stringify(local[key])}`);
+    console.log("Updating", key, "from", process.env[key] === undefined ? '(nothing)' : process.env[key], "to", local[key]);
     process.env[key] = local[key];
   }
-  process.chdir(path.resolve(info.path));
+  const targetCwd = path.resolve(info.path);
+  if (updated.length) {
+    parsed.options.debug && console.log("Updated environment vars:", updated);
+  } else {
+    parsed.options.debug && console.log("Nothing to update in environment vars");
+  }
+  process.chdir(targetCwd);
 }
 
 if (!valid) {
