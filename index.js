@@ -109,8 +109,8 @@ if (["status", "logs", "runtime", "schedule", "process", "manager"].includes(par
       process.env[key] = local[key];
       continue;
     }
-    updated.push(`Env "${key}" set to ${JSON.stringify(local[key])}`);
-    console.log("Updating", key, "from", process.env[key] === undefined ? '(nothing)' : process.env[key], "to", local[key]);
+    updated.push(`"${key}" = ${JSON.stringify(local[key])}`);
+    // console.log("Updating", key, "from", process.env[key] === undefined ? '(nothing)' : process.env[key], "to", local[key]);
     process.env[key] = local[key];
   }
   const targetCwd = path.resolve(info.path);
