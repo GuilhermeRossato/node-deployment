@@ -1,4 +1,4 @@
-// Script built at 2024-07-03T14:42:40.723Z
+// Script built at 2024-07-03T19:01:07.840Z
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
@@ -2507,12 +2507,12 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
   }
   debugProcess &&
     console.log(
-      "Install files from production folder:",
+      "Files at current instance folder:",
       files.filter((f) => f.source).map((f) => f.name)
     );
   debugProcess &&
     console.log(
-      "Install files at new production folder:",
+      "Files at upcoming instance folder:",
       files.filter((f) => f.target).map((f) => f.name)
     );
   const [pkg, pklock, yarnlock, nodemodules] = files;
@@ -2538,7 +2538,12 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
   const result = await executeProcessPredictably(cmd, nextInstancePath, {
     timeout: 180_000,
     shell: true,
-    output: "inherit",
+    output: function onInstallData(d) {
+      if (d.endsWith("\n")) {
+        d = d.substring(0, d.length - 1);
+      }
+      console.log(d);
+    },
   });
   process.stdout.write("\n");
   if (result.error instanceof Error) {
