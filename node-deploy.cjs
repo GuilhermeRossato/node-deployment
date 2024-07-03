@@ -1,3 +1,4 @@
+// Script built at 2024-07-03T13:36:06.283Z
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
@@ -142,7 +143,8 @@ async function checkPathStatus(target) {
  * @returns {PathStatus} The status of the path
  */
 function checkPathStatusSync(target) {
-  const tlist =
+  /** @type {any[]} */
+  let tlist =
     target instanceof Array
       ? target
       : typeof target === "string"
@@ -150,7 +152,7 @@ function checkPathStatusSync(target) {
       : typeof target === "object" && typeof target.path === "string"
       ? [target.path]
       : [""];
-  if (tlist.some((t) => typeof t !== "string")) {
+  if (tlist.some((t) => typeof t === "object")) {
     tlist = tlist.map((t) => (typeof t === "object" && typeof t.path === "string" && t.path ? t.path : t));
   }
   if (tlist.some((t) => typeof t !== "string")) {
@@ -301,22 +303,49 @@ function getIntervalString(ms) {
     return `${left}${m === 1 ? "1 minute" : `${m} minutes`} ${right}`;
   }
   if (h <= 24) {
-    return `${left}${h} hour${h === 1 ? "" : "s"} and ${m} minutes`;
+    return `${left}${h} hour${h === 1 ? "" : "s"} and ${m % 60} minute${m % 60 === 1 ? "" : "s"}`;
   }
   const days = Math.floor(s / (24 * 60 * 60));
-  const sufix = h === 0 ? "" : h === 1 ? "an 1 hour" : ` and ${h} hours`;
-  return `${left}${days} ${days === 1 ? "day" : "days"}${sufix}`;
+  const sufix = h % 24 === 0 ? "" : h % 24 === 1 ? " and 1 hour" : ` and ${h % 24} hours`;
+  return `${left}${days} day${days === 1 ? "" : "s"}${sufix}`;
 }
 // ./src/lib/sendInternalRequest.js
+global.debugReq = true
+
+function getManagerHost(target = "manager") {
+  let host = target === "manager" ? process.env.INTERNAL_DATA_SERVER_HOST || "127.0.0.1" : "127.0.0.1";
+  let port = target === "manager" ? process.env.INTERNAL_DATA_SERVER_PORT || "49737" : "49738";
+  let hostname = `http://${host}:${port}/`;
+  if (typeof target === "string" && (target.startsWith("http://") || target.startsWith("https://"))) {
+    debugReq && console.log("Request target hostname set to", JSON.stringify(target));
+    hostname = target;
+    const startHost = hostname.indexOf("//") + 2;
+    if (hostname.indexOf(":", 7) !== -1) {
+      host = hostname.substring(startHost, hostname.indexOf(":", 7));
+      port = hostname
+        .substring(hostname.indexOf(":", 7) + 1, hostname.indexOf("/", 7) + 1 || hostname.length)
+        .replace(/\D/g, "");
+    } else if (hostname.indexOf("/", 7) !== -1) {
+      host = hostname.substring(startHost, hostname.indexOf("/", 7));
+      port = "80";
+    } else {
+      host = hostname.substring(startHost, hostname.length);
+      port = "80";
+    }
+  }
+  if (!hostname.endsWith("/")) {
+    hostname = `${hostname}/`;
+  }
+  return { host, port, hostname };
+}
+
 /**
  * @param {string} target
  * @param {string} type
  * @param {any} data
  */
 async function sendInternalRequest(target = "manager", type = "", data = null) {
-  const host = target === "manager" ? process.env.INTERNAL_DATA_SERVER_HOST || "127.0.0.1" : "127.0.0.1";
-  const port = target === "manager" ? process.env.INTERNAL_DATA_SERVER_PORT || "49737" : "49738";
-  const hostname = `http://${host}:${port}/`;
+  const { hostname } = getManagerHost(target);
   const url = `${hostname}api/${type}`;
   let stage = "start";
   let status = 0;
@@ -492,17 +521,13 @@ async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
       ? "buffer"
       : config.output instanceof Function
       ? "function"
-      : config.output === "buffer" ||
-        config.output === "raw" ||
-        config.output === "binary"
+      : config.output === "buffer" || config.output === "raw" || config.output === "binary"
       ? "binary"
       : config.output === "pipe" || config.output === "inherit"
       ? "pipe"
       : config.output;
 
-  const shell =
-    (config.shell === undefined && cmd instanceof Array) ||
-    config.shell === true;
+  const shell = (config.shell === undefined && cmd instanceof Array) || config.shell === true;
 
   const debug = config.debug;
   const isArray = cmd instanceof Array;
@@ -512,11 +537,12 @@ async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
       "Starting predictable process execution of",
       JSON.stringify(isArray ? cmd[0] : cmd.split(" ").shift()),
       "with args",
-      { timeout, throws, output: outputType, attached, shell }
+      { timeout, output: outputType, attached, shell },
+      throws ? "(throw mode)" : ""
     );
 
   /**
-   * @type {Awaited<ReturnType<executeProcessPredictably>>}
+   * @type {Awaited<ReturnType<typeof executeProcessPredictably>>}
    */
   const response = {};
   /** @type {any} */
@@ -545,8 +571,10 @@ async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
     }
     return response;
   }
+  debug && console.log("Process cmd:", cmd);
+  debug && console.log("Process cwd:", cwd);
   const chunks = [];
-  const type = await new Promise((resolve) => {
+  const type = await new Promise(function spawnExecuteProcessPredictably(resolve) {
     let timer = null;
     try {
       debug &&
@@ -562,17 +590,9 @@ async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
 
       const onTimeout = () => {
         debug &&
-          console.log(
-            "Timeout elapsed on",
-            response.start ? "spawned" : "unspawned",
-            "child (after",
-            timeout,
-            "ms)"
-          );
+          console.log("Timeout elapsed on", response.start ? "spawned" : "unspawned", "child (after", timeout, "ms)");
         timer = null;
-        response.error = new Error(
-          `Child timeout (${response.start ? "after spawn" : "not spawned"})`
-        );
+        response.error = new Error(`Child timeout (${response.start ? "after spawn" : "not spawned"})`);
         resolve("timeout");
       };
 
@@ -596,8 +616,7 @@ async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
           response.error = err;
         }
         if (response.start) {
-          response.duration =
-            (new Date().getTime() - response.start.getTime()) / 1000;
+          response.duration = (new Date().getTime() - response.start.getTime()) / 1000;
         }
         resolve(response);
         return;
@@ -605,13 +624,7 @@ async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
 
       child.on("spawn", () => {
         response.start = new Date();
-        debug &&
-          console.log(
-            "Child",
-            child.pid,
-            "spawned at",
-            response.start.toISOString()
-          );
+        debug && console.log("Child", child.pid, "spawned at", response.start.toISOString());
       });
 
       child.on("error", (err) => {
@@ -623,8 +636,7 @@ async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
           response.error = err;
         }
         if (response.start) {
-          response.duration =
-            (new Date().getTime() - response.start.getTime()) / 1000;
+          response.duration = (new Date().getTime() - response.start.getTime()) / 1000;
         }
         debug && console.log("Child finished:", response);
         resolve("error");
@@ -638,8 +650,7 @@ async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
           timer = null;
         }
         if (response.start) {
-          response.duration =
-            (new Date().getTime() - response.start.getTime()) / 1000;
+          response.duration = (new Date().getTime() - response.start.getTime()) / 1000;
         }
         response.exit = code;
         if (!response.error && code !== 0) {
@@ -647,15 +658,6 @@ async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
         }
         resolve(code);
       });
-
-      if (outputType !== "ignore" && child.stdout && child.stderr) {
-        const handleOutput = (data) => {
-          if (outputType === "buffer") {
-            chunks.push(data);
-          } else if (outputType === "function") {
-          }
-        };
-      }
 
       const handleOutput =
         outputType === "function" || outputType === "pipe"
@@ -666,20 +668,12 @@ async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
 
       if (child.stdout && child.stdout.on) {
         child.stdout.on("data", (data) =>
-          handleOutput
-            ? handleOutput(
-                outputType === "binary" ? data : data.toString("utf-8")
-              )
-            : chunks.push(data)
+          handleOutput ? handleOutput(outputType === "binary" ? data : data.toString("utf-8")) : chunks.push(data)
         );
       }
       if (child.stderr && child.stderr.on) {
         child.stderr.on("data", (data) =>
-          handleOutput
-            ? handleOutput(
-                outputType === "binary" ? data : data.toString("utf-8")
-              )
-            : chunks.push(data)
+          handleOutput ? handleOutput(outputType === "binary" ? data : data.toString("utf-8")) : chunks.push(data)
         );
       }
     } catch (err) {
@@ -697,10 +691,7 @@ async function executeProcessPredictably(cmd, cwd = ".", config = {}) {
   debug && console.log("Process finished type:", type);
   debug && console.log("Process handling response:", response);
   if (chunks.length) {
-    response.output =
-      outputType === "binary"
-        ? Buffer.concat(chunks)
-        : Buffer.concat(chunks).toString("utf-8");
+    response.output = outputType === "binary" ? Buffer.concat(chunks) : Buffer.concat(chunks).toString("utf-8");
   }
   if (response.error && config.throws) {
     throw response.error;
@@ -760,10 +751,11 @@ global.modeDescRec = {
   "--setup": "Initialize and setup a project for automatic deployment",
   "--config": "Change settings and configure a repository interactively",
   "--status / -s": "Retrieve status information from the manager process",
-  "--logs / -l": "Print and stream all logs continuously",
+  "--logs / -l": "Print and stream logs continuously",
   "--instance / --app": "Print and stream logs from the project instance process",
   "--start / --restart": "Start or restart the manager process and display its status",
-  "--shutdown": "Stop a project process and its instance manager process",
+  "--shutdown": "Stop the project process and the instance manager process",
+  "--upgrade <path>": "Fetch the deployment script source and write to a target file",
   "--schedule": "Manually schedule the asyncronous execution of the deployment pipeline",
   "--schedule <commit>": "Schedules deployment of a specific version of the project",
   "--schedule <ref>": "Schedules deployment specifying the project version by a reference",
@@ -774,7 +766,7 @@ global.modeDescRec = {
 };
 global.modeDescs = Object.entries(modeDescRec)
 global.flagDescs = [
-  ["--debug / --verbose / -d", "Enable verbose mode of the deployment manager"],
+  ["--debug / --verbose / -d", "Enable verbose mode (prints more logs)"],
   ["--force / --yes / -y", "Force confirmations, automatically assuming yes "],
   ["--dry-run / --dry", "Simulate execution by not writing files and causing no side-effects"],
   ["--sync / --wait", "Execute child processes syncronously"],
@@ -815,7 +807,7 @@ async function initHelp(options) {
   }
   console.log("");
   console.log(" Modes:");
-  const limit = options.debug ? modeDescs.length : 5;
+  const limit = options.debug ? modeDescs.length : 9;
   for (let i = 0; i < limit; i++) {
     const k = modeDescs[i];
     console.log(`\t${k[0].padEnd(pad)}${k[1]}`);
@@ -865,12 +857,16 @@ function outputDatedLine(prefix, date, ...args) {
 }
 
 function outputLogEntry(prefix, obj) {
-  if (process.stdout && process.stdout.columns >= 60) {
+  if (obj.pid && process.stdout && process.stdout.columns >= 60) {
     const right = `PID: ${obj.pid.toString()}`;
     const s = process.stdout.columns - right.length - 2;
     process.stdout.write(`${" ".repeat(s) + right}\r`);
   }
-  outputDatedLine(`[${prefix}]`, obj.time, " " + obj.src, "-", obj.pid.toString(), "-", obj.text);
+  if (!obj.src && !obj.pid) {
+    outputDatedLine(` [${prefix}]`, obj.time, obj.text);
+  } else {
+    outputDatedLine(` [${prefix}]`, obj.time, ` ${obj.src}`, "-", obj.pid.toString(), "-", obj.text);
+  }
   return obj.time;
 }
 // ./src/process/killProcessByPid.js
@@ -1026,7 +1022,6 @@ function configLog(source, pid, date, hour, prefix) {
  */
 function attachToConsole(method = "log", logFilePath = "", hidePrefix = false) {
   const originalMethod = console[method].bind(console);
-  console.log(`logFilePath`, logFilePath);
   let inside = false;
   const handleCall = (...args) => {
     if (inside) {
@@ -1187,23 +1182,26 @@ function separateLogLineDate(line) {
   }
   const dateTimeSep = line.indexOf(" ");
   const dateSrcSep = line.indexOf(" - ", dateTimeSep);
-  const srcPidStep = line.indexOf(" - ", dateSrcSep + 3);
-  if (dateTimeSep !== 10 || dateSrcSep === -1 || srcPidStep === -1) {
+  if (dateTimeSep !== 10 || dateSrcSep === -1) {
     return null;
   }
-  const pidTxtStep = line.indexOf(" - ", srcPidStep + 3);
   const dateStr = line.substring(0, dateTimeSep);
   const timeStr = line.substring(dateTimeSep + 1, dateSrcSep);
+  const time = new Date(`${dateStr} ${timeStr} ${extra}`).getTime();
+  const srcPidStep = line.indexOf(" - ", dateSrcSep + 3);
+  if (srcPidStep === -1) {
+    return { time, src: "", pid: 0, text: line.substring(dateSrcSep + 3) };
+  }
+  const pidTxtStep = line.indexOf(" - ", srcPidStep + 3);
   const srcStr = line.substring(dateSrcSep + 3, srcPidStep);
   const pidStr = line.substring(srcPidStep + 3, pidTxtStep);
-  const time = new Date(`${dateStr} ${timeStr} ${extra}`).getTime();
   if (srcPidStep === -1 || !pidStr.length || /\D/g.test(pidStr)) {
-    return { time, src: "", pid: 0, text: line.substring(dateSrcSep + 3).trim() };
+    return { time, src: "", pid: 0, text: line.substring(dateSrcSep + 3) };
   }
   if (pidTxtStep === -1) {
-    return { time, src: "", pid: parseInt(pidStr), text: line.substring(srcPidStep + 3).trim() };
+    return { time, src: "", pid: parseInt(pidStr), text: line.substring(srcPidStep + 3) };
   }
-  return { time, src: srcStr, pid: parseInt(pidStr), text: line.substring(pidTxtStep + 3).trim() };
+  return { time, src: srcStr, pid: parseInt(pidStr), text: line.substring(pidTxtStep + 3) };
 }
 
 /**
@@ -1219,9 +1217,7 @@ async function readLogFile(filePath, offset, buffer) {
     buffer,
     offset,
     sizeDesc: "",
-    readTime: new Date().getTime(),
     updateTime: 0,
-    updateDesc: "",
     text: "",
   };
   const stat = await asyncTryCatchNull(fs.promises.stat(filePath));
@@ -1231,18 +1227,6 @@ async function readLogFile(filePath, offset, buffer) {
   const size = (result.size = stat.size);
   result.updateTime = stat.mtimeMs;
   const elapsed = new Date().getTime() - stat.mtimeMs;
-  const s = elapsed / 1000;
-  const elapsedStr = isNaN(elapsed)
-    ? "(never)"
-    : s <= 1
-    ? `${elapsed.toFixed(0)} ms`
-    : s <= 60
-    ? `${s.toFixed(1)} seconds`
-    : s <= 60 * 60
-    ? `${Math.floor(s / 60)} minutes and ${Math.floor(s % 1)} seconds`
-    : s <= 24 * 60 * 60
-    ? `${Math.floor(s / (60 * 60))}:${Math.floor(s / 60) % 1}:${Math.floor(s % 1)}`
-    : `${Math.floor(s / (24 * 60 * 60))} days and ${Math.floor(s / (60 * 60)) % 1} hours`;
 
   result.sizeDesc = isNaN(elapsed)
     ? "(no file)"
@@ -1253,8 +1237,6 @@ async function readLogFile(filePath, offset, buffer) {
     : size < 1024 * 1024
     ? `${(size / 1024).toFixed(1)} KB`
     : `${(size / (1024 * 1024)).toFixed(2)} MB`;
-
-  result.updateDesc = isNaN(elapsed) ? "(never)" : `${elapsedStr} ago (at ${stat.mtime.toISOString()})`;
 
   if (offset && offset >= stat.size) {
     result.offset = stat.size;
@@ -1476,8 +1458,12 @@ async function getRepoCommitData(repositoryPath, ref) {
   return result;
 }
 async function executeGitCheckout(repositoryPath, targetPath, ref = "") {
-  const cmd = `git --work-tree="${targetPath}" checkout -f${ref ? ` ${ref}` : ""}`;
-  const result = await executeGitProcessPredictably(cmd, repositoryPath);
+  const cmd = `git --work-tree="${repositoryPath}" checkout -f${ref ? ` ${ref}` : ""}`;
+  if (!fs.existsSync(targetPath)) {
+    console.log("Creating target directory at", JSON.stringify(targetPath));
+    await fs.promises.mkdir(targetPath, { recursive: true });
+  }
+  const result = await executeGitProcessPredictably(cmd, targetPath);
   return result;
 }
 
@@ -1520,11 +1506,12 @@ async function getHashFromRef(targetPath, ref) {
 }
 // ./src/logs/getLastLogs.js
 /**
- * @param {string[]} prefixes File name prefix list
+ * @param {string[]} prefixes File name prefix list to filter
+ * @param {string[]} names
  * @param {Buffer[]} buffers
  * @param {number} size
  */
-async function getLastLogs(prefixes = [], buffers = [], size = 4096) {
+async function getLastLogs(prefixes = [], names = [], buffers = [], size = 4096) {
   const { options } = getParsedProgramArgs(false);
   let status = await checkPathStatus(options.dir || process.cwd());
   // inside deployment folder
@@ -1568,10 +1555,10 @@ async function getLastLogs(prefixes = [], buffers = [], size = 4096) {
       status = inside;
     }
   }
-  return await getProjectRepoLogs(status.path, prefixes, buffers, size);
+  return await getProjectRepoLogs(status.path, prefixes, names, buffers, size);
 }
 
-async function getProjectRepoLogs(projectPath, names = [], buffers = [], size = 4096) {
+async function getProjectRepoLogs(projectPath, prefixes = [], names = [], buffers = [], size = 4096) {
   const root = `${path.resolve(projectPath)}/`;
   const unfiltered = await getProjectRepoLogsFiles(projectPath);
 
@@ -1580,7 +1567,7 @@ async function getProjectRepoLogs(projectPath, names = [], buffers = [], size = 
       .map((n) => n.substring(n.lastIndexOf("/") + 1, n.includes(".") ? n.lastIndexOf(".") : n.length))
       .join("");
 
-  const bases = names.map((n) => getBase(n));
+  const bases = prefixes.map((n) => getBase(n));
 
   const fileList = unfiltered.filter((f) => {
     if (!bases.length) {
@@ -1596,7 +1583,9 @@ async function getProjectRepoLogs(projectPath, names = [], buffers = [], size = 
   const list = [];
   for (let i = 0; i < fileList.length; i++) {
     const logName = fileList[i].path.substring(root.length);
-    names[i] = logName;
+    if (!names.includes(logName)) {
+      names.push(logName);
+    }
     const result = await readLogFile(fileList[i].path, -size, buffers[i]);
     if (!buffers[i]) {
       buffers[i] = result.buffer;
@@ -1622,6 +1611,7 @@ async function getProjectRepoLogs(projectPath, names = [], buffers = [], size = 
     list: list.sort((a, b) => a.time - b.time),
     buffers,
     names,
+    prefixes,
     projectPath,
   };
 }
@@ -1666,7 +1656,7 @@ async function getProjectRepoLogsFiles(target) {
   return fileList;
 }
 // ./src/logs/waitForLogFileUpdate.js
-global.debug = false
+global.debugWaitForLog = false
 
 async function waitForLogFileUpdate(cursor = 0, pids = [], modes = []) {
   for (let cycle = 0; true; cycle++) {
@@ -1674,18 +1664,21 @@ async function waitForLogFileUpdate(cursor = 0, pids = [], modes = []) {
     const next = await getLastLogs(modes);
     if (cycle === 0) {
       console.log(`Waiting for log updates (currently ${next.names.length} files matched modes)`);
-      debug && console.log("Mode filters:", modes);
-      debug && console.log("Previous pids:", pids);
-      debug && console.log("Cursor:", cursor);
+      debugWaitForLog && console.log("Mode filters:", modes);
+      debugWaitForLog && console.log("Previous pids:", pids);
+      debugWaitForLog && console.log("Cursor:", cursor);
     }
     const list = next.list.filter((l) => l.time > cursor);
     if (list.length === 0) {
       await sleep(200);
       continue;
     }
+    if (!pids || pids.length === 0 || cycle > 15) {
+      console.log("Log file updated:\n");
+    }
     for (let i = 0; i < list.length; i++) {
       const obj = list[i];
-      const prefix = obj.file[0].toUpperCase();
+      const prefix = obj.file;
       outputDatedLine(`[${prefix}]`, obj.time, obj.pid, obj.src, obj.text);
     }
     if (!pids || pids.length === 0 || cycle > 15) {
@@ -1693,7 +1686,7 @@ async function waitForLogFileUpdate(cursor = 0, pids = [], modes = []) {
     }
     const novelPids = [...new Set(list.map((a) => a.pid).filter((p) => !pids.includes(p)))];
     if (novelPids.length) {
-      debug && console.log("New pid at logs:", novelPids);
+      debugWaitForLog && console.log("New pid at logs:", novelPids);
       return list;
     }
     continue;
@@ -1707,12 +1700,12 @@ async function initLogs(options) {
   await sleep(200);
   process.stdout.write("\n");
   await sleep(200);
-  const names = options.mode === "runtime" ? ["instance"] : [];
-  const logs = await getLastLogs(names);
+  const prefixes = options.mode === "runtime" ? ["instance"] : [];
+  const logs = await getLastLogs(prefixes);
   if (logs.names.length === 0) {
     console.log("Could not find any log file");
   } else {
-    process.stdout.write(` Loaded logs from ${logs.names.length} files of ${JSON.stringify(logs.projectPath)}`);
+    process.stdout.write(`Loaded ${logs.names.length} log files from ${JSON.stringify(logs.projectPath)}`);
     process.stdout.write("\n");
     const header = "     log-file          yyyy-mm-dd hh:mm:ss        source - pid - text...      ";
     process.stdout.write(`${"-".repeat(header.length)}\n`);
@@ -1732,15 +1725,25 @@ async function initLogs(options) {
   }
   if (options.debug) {
     console.log("");
-    if (names.length) {
-      console.log("Filters  :", JSON.stringify(names));
+    if (prefixes.length) {
+      console.log("Filters  :", JSON.stringify(prefixes));
     }
-    console.log("Current  :", getDateTimeString(new Date().getTime()), `(${logs.names.length} log files)`);
-    console.log("Last log :", getDateTimeString(cursor), `(${getIntervalString(new Date().getTime() - cursor)} ago)`);
+    console.log("Current  :", getDateTimeString(new Date().getTime()));
     if (list.length) {
-      console.log("Last file:", JSON.stringify(list[list.length - 1].file), "at pid", list[list.length - 1].pid);
+      console.log(
+        "Last file:",
+        JSON.stringify(list[list.length - 1].file),
+        "written by pid",
+        list[list.length - 1].pid
+      );
       console.log("");
     }
+    console.log(
+      "Last log :",
+      getDateTimeString(cursor),
+      `(updated ${getIntervalString(new Date().getTime() - cursor)} ago)`
+    );
+
     await sleep(1000);
   }
   process.stdout.write("\n");
@@ -1749,14 +1752,14 @@ async function initLogs(options) {
   await sleep(200);
   process.stdout.write("\n");
   await sleep(200);
-  await streamStatusLogs(cursor, true, names);
+  await streamStatusLogs(cursor, true, prefixes);
 }
 
-async function streamStatusLogs(cursor = 0, continuous = true, names) {
+async function streamStatusLogs(cursor = 0, continuous = true, prefixes = []) {
   let lastPrint = new Date().getTime();
   for (let cycle = 0; true; cycle++) {
     await sleep(300);
-    const all = await getLastLogs(names);
+    const all = await getLastLogs(prefixes);
     const list = all.list.filter((l) => l.time > cursor);
     if (list.length === 0) {
       await sleep(300);
@@ -1849,24 +1852,139 @@ async function readPidFile(mode) {
     path: status.path,
   };
 }
-// ./src/process/spawnManagerProcess.js
-async function spawnManagerProcess(debug = false, detached = true) {
-  const logs = await getLastLogs(["mana"]);
-  const list = logs.list.filter((f) => ["mana"].includes(path.basename(f.file).substring(0, 4)));
-  console.log(`Spawning manager script for ${JSON.stringify(logs.projectPath)}`, debug ? "in debug mode" : "");
+// ./src/modes/statusMode.js
+/**
+ * @type {import("../lib/getProgramArgs.js").InitModeMethod}
+ */
+async function initStatus(options) {
+  let res;
+
+  if (options.shutdown || options.restart) {
+    console.log("Sending shutdown request...");
+    await executeWrappedSideEffect("Spawn manager server", async () => {
+      res = await sendInternalRequest("manager", "shutdown");
+      options.debug && console.log("Status mode shutdown response:", res);
+    });
+    if (options.shutdown && !options.start && !options.restart && options.mode !== "logs") {
+      options.debug && console.log("Status script finished (after shutdown)");
+      return;
+    }
+  }
+
+  if (options.shutdown || options.restart) {
+    console.log("Spawning manager process...");
+    await executeWrappedSideEffect("Spawn manager server", async () => {
+      await spawnManagerProcess(options.debug, !options.sync);
+    });
+  }
+  let read = {
+    time: NaN,
+    pid: null,
+    running: false,
+    path: "",
+  };
+  {
+    const root = options.dir || process.cwd();
+    let deploy = await checkPathStatus([root, process.env.DEPLOYMENT_FOLDER_NAME || "deployment"]);
+    if (!deploy.type.dir) {
+      deploy = await checkPathStatus([root, ".git", process.env.DEPLOYMENT_FOLDER_NAME || "deployment"]);
+    }
+    if (deploy.type.dir) {
+      read = await readPidFile("manager");
+    } else {
+      console.log("Warning: The repository deployment folder was not found at this project");
+    }
+  }
+  if (read.running) {
+    console.log("Requesting status from manager process server with pid", read.pid);
+    res = await sendInternalRequest("manager", "status");
+    if (res.error && res.stage === "network") {
+      console.log("Could not connect to internal manager process server");
+    } else if (res.error) {
+      console.log("Failed to request from the internal manager process server:");
+      console.log(options.debug ? res : res.error);
+    } else {
+      console.log("Status response:");
+      for (const line of JSON.stringify(res, null, "  ").split("\n")) {
+        console.log(line);
+      }
+    }
+  } else {
+    console.log("The manager process is not currently in execution");
+    if (options.restart || options.start) {
+      console.log("Attempting to start the manager process", options.sync ? "syncronously..." : "...");
+      await spawnManagerProcess(options.debug, !options.sync);
+      console.log("Spawn manager process resolved");
+      res = null;
+    } else {
+      console.log('To start the manager process use the "--start" argument');
+      console.log('You can also restart it with "--restart" or stop it with "--shutdown"');
+      return;
+    }
+  }
+  if (!res) {
+    await sleep(300);
+    console.log("Requesting status from the manager process again...");
+    await sleep(300);
+    res = await sendInternalRequest("manager", "status");
+    console.log(res);
+  }
+  if (res?.error && res.stage === "network") {
+    console.log("Could not connect to internal server (Manager server is offline)");
+    await sleep(500);
+    console.log("Loading latest manager process logs...");
+
+    const logs = await getLastLogs(["mana"]);
+    const list = logs.list.filter((f) => ["mana"].includes(path.basename(f.file).substring(0, 4)));
+    if (list.length === 0) {
+      console.log("Could not find any manager log entry to display");
+    } else {
+      console.log(`Loaded ${list.length} log entries from ${JSON.stringify(logs.projectPath)}`);
+      for (let i = Math.max(0, list.length - 15); i < list.length - 1; i++) {
+        const obj = list[i];
+        outputLogEntry(obj.file.substring(obj.file.length - 20).padStart(20), obj);
+      }
+    }
+  }
+  console.log("Status mode finished");
+}
+// ./src/modes/scheduleMode.js
+// @ts-check
+
+
+
+
+
+
+
+
+
+
+
+
+/**
+ * @type {import("../lib/getProgramArgs.js").InitModeMethod}
+ */
+async function initScheduler(options) {
+  const debug = options.debug;
+  const logs = await getLastLogs(["proc"]);
+  const list = logs.list.filter((f) => ["proc"].includes(path.basename(f.file).substring(0, 4)));
+  const cwd = logs.projectPath || options.dir || process.cwd();
+  console.log(`Scheduling script started for ${JSON.stringify(cwd)}`, debug ? "in debug mode" : "");
 
   let cursor = 0;
   const last = list[list.length - 1];
   if (last) {
     cursor = last.time;
+    console.log(`Latest log file path updated: ${JSON.stringify(path.resolve(last.file).replace(/\\/g, "/"))}`);
     console.log(
-      `Latest log file "${path.basename(last.file)}" was updated ${getIntervalString(
-        new Date().getTime() - last.time
-      )} ago (at ${getDateTimeString(last.time)})`
+      `Latest log update was ${getIntervalString(new Date().getTime() - last.time)} ago (at ${getDateTimeString(
+        last.time
+      )})`
     );
     await sleep(200);
     let i = Math.max(0, list.length - (debug ? 10 : 2));
-    process.stdout.write(`  Displaying ${list.length - i} logs:\n`);
+    process.stdout.write(`\n  Displaying ${list.length - i} logs:\n`);
     await sleep(200);
     process.stdout.write("\n");
     await sleep(200);
@@ -1886,7 +2004,84 @@ async function spawnManagerProcess(debug = false, detached = true) {
       console.log("The process is executing at pid", last.pid);
     }
   } else {
-    console.log("There are no manager log files");
+    console.log("There are no processor log files");
+  }
+
+  const program = process.argv[0];
+  const script = path.resolve(process.argv[1]);
+
+  const args = [script, "--processor"];
+  if (options.ref) {
+    args.push(options.ref);
+    console.log("Loading ref data for", options.ref);
+    const refData = await getRepoCommitData(options.dir, options.ref);
+    console.log("Hash", refData.hash, "Ref", options.ref, "\nCommit", getDateTimeString(refData.date), refData.text);
+  }
+  if (options.debug) {
+    args.push("--debug");
+  }
+
+  debug && console.log(`Spawning processor script "${path.basename(script)}" with ${args.length - 1} arguments`);
+  debug && console.log(`${options.sync ? "Syncronous" : "Detached"} processor execution args:`, args.slice(1));
+
+  const exec = executeWrappedSideEffect('Spawning "--processor" child', async () => {
+    return await spawnChildScript(program, args, cwd, !options.sync);
+  });
+  if (!options.sync) {
+    const wait = executeWrappedSideEffect('Waiting for "processor" logs', async () => {
+      return await waitForLogFileUpdate(cursor, [], ["proc"]);
+    });
+    await Promise.all([exec, wait]);
+    console.log("Schedule mode finished");
+  }
+}
+
+async function spawnChildScript(program, args, cwd, detached) {
+  await sleep(500);
+  return await executeProcessPredictably([program, ...args], cwd, {
+    detached,
+    output: detached ? "inherit" : "accumulate",
+  });
+}
+// ./src/process/spawnManagerProcess.js
+async function spawnManagerProcess(debug = false, detached = true) {
+  const logs = await getLastLogs(["mana"]);
+  const list = logs.list.filter((f) => ["mana"].includes(path.basename(f.file).substring(0, 4)));
+  console.log(`Spawning child manager script for ${JSON.stringify(logs.projectPath)}`, debug ? "in debug mode" : "");
+
+  let cursor = 0;
+  const last = list[list.length - 1];
+  if (last) {
+    cursor = last.time;
+    console.log(`Latest log file path updated: ${JSON.stringify(path.resolve(last.file).replace(/\\/g, "/"))}`);
+    console.log(
+      `Latest log update was ${getIntervalString(new Date().getTime() - last.time)} ago (at ${getDateTimeString(
+        last.time
+      )})`
+    );
+    await sleep(200);
+    let i = Math.max(0, list.length - (debug ? 10 : 2));
+    process.stdout.write(`\n  Displaying ${list.length - i} logs:\n`);
+    await sleep(200);
+    process.stdout.write("\n");
+    await sleep(200);
+    for (i = i; i < list.length; i++) {
+      const obj = list[i];
+      outputLogEntry(obj.file.substring(obj.file.length - 20).padStart(20), obj);
+    }
+    process.stdout.write("\n");
+    await sleep(200);
+    if (debug && i === list.length - 1) {
+      console.log("Last log object:", last);
+    }
+    process.stdout.write("\n");
+    await sleep(200);
+    const runs = await isProcessRunningByPid(last.pid);
+    if (runs) {
+      console.log("The process is executing at pid", last.pid);
+    }
+  } else {
+    console.log("There are no previous manager log files");
   }
 
   const cwd = logs.projectPath;
@@ -1909,7 +2104,7 @@ async function spawnManagerProcess(debug = false, detached = true) {
   await Promise.all([exec, wait]);
   await sleep(200);
   process.stdout.write("\n");
-  console.log("Verifying if manager process started by requesting status");
+  console.log("Requesting status from manager process after spawning...");
   let success = false;
   for (let i = 0; i < 30 && !success; i++) {
     await sleep(200);
@@ -1946,7 +2141,7 @@ async function spawnManagerProcess(debug = false, detached = true) {
     }
   }
   if (!success) {
-    throw new Error("Failed during manager script start as status was not received");
+    throw new Error("Manager script could not be started: Status request not successfull");
   }
 }
 
@@ -1955,100 +2150,6 @@ async function spawnChildScript(program, args, cwd, detached) {
   return await executeProcessPredictably([program, ...args], cwd, {
     detached,
   });
-}
-// ./src/modes/statusMode.js
-/**
- * @type {import("../lib/getProgramArgs.js").InitModeMethod}
- */
-async function initStatus(options) {
-  let response;
-
-  if (options.shutdown || options.restart) {
-    console.log("Sending shutdown request...");
-    await executeWrappedSideEffect("Spawn manager server", async () => {
-      response = await sendInternalRequest("manager", "shutdown");
-      options.debug && console.log("Shutdown response:", response);
-    });
-    if (options.shutdown && !options.start && !options.restart && options.mode !== "logs") {
-      options.debug && console.log("Status script finished (after shutdown)");
-      return;
-    }
-  }
-
-  if (options.shutdown || options.restart) {
-    console.log("Spawning manager process...");
-    await executeWrappedSideEffect("Spawn manager server", async () => {
-      await spawnManagerProcess(options.debug, !options.sync);
-    });
-  }
-  let read = {
-    time: NaN,
-    pid: null,
-    running: false,
-    path: "",
-  };
-  {
-    const root = options.dir || process.cwd();
-    let deploy = await checkPathStatus([root, process.env.DEPLOYMENT_FOLDER_NAME || "deployment"]);
-    if (!deploy.type.dir) {
-      deploy = await checkPathStatus([root, ".git", process.env.DEPLOYMENT_FOLDER_NAME || "deployment"]);
-    }
-    if (deploy.type.dir) {
-      read = await readPidFile("manager");
-    } else {
-      console.log("Warning: The repository deployment folder was not found at this project");
-    }
-  }
-  if (read.running) {
-    console.log("Requesting status from manager process server with pid", read.pid);
-    response = await sendInternalRequest("manager", "status");
-    if (response.error && response.stage === "network") {
-      console.log("Could not connect to internal manager process server");
-    } else if (response.error) {
-      console.log("Failed to request from the internal manager process server:");
-      console.log(options.debug ? response : response.error);
-    } else {
-      console.log("Successfull status response:");
-      console.log(response);
-    }
-  } else {
-    console.log("The manager process is not currently in execution");
-    if (options.restart || options.start) {
-      console.log("Attempting to start the manager process", options.sync ? "syncronously..." : "...");
-      await spawnManagerProcess(options.debug, !options.sync);
-      console.log("Spawn manager process resolved");
-      response = null;
-    } else {
-      console.log('To start the manager process use the "--start" argument');
-      console.log('You can also restart it with "--restart" or stop it with "--shutdown"');
-      return;
-    }
-  }
-  if (!response) {
-    await sleep(300);
-    console.log("Requesting status from the manager process again...");
-    await sleep(300);
-    response = await sendInternalRequest("manager", "status");
-    console.log(response);
-  }
-  if (response?.error && response.stage === "network") {
-    console.log("Could not connect to internal server (Manager server is offline)");
-    await sleep(500);
-    console.log("Loading latest manager process logs...");
-
-    const logs = await getLastLogs(["mana"]);
-    const list = logs.list.filter((f) => ["mana"].includes(path.basename(f.file).substring(0, 4)));
-    if (list.length === 0) {
-      console.log("Could not find any manager log entry to display");
-    } else {
-      console.log(`Loaded ${list.length} log entries from ${JSON.stringify(logs.projectPath)}`);
-      for (let i = Math.max(0, list.length - 15); i < list.length - 1; i++) {
-        const obj = list[i];
-        outputLogEntry(obj.file.substring(obj.file.length - 20).padStart(20), obj);
-      }
-    }
-  }
-  console.log("Status mode finished");
 }
 // ./src/modes/processMode.js
 global.debugProcess = true
@@ -2084,7 +2185,7 @@ async function initProcessor(options) {
   console.log(`execPurgeRes`, execPurgeRes);
 
   try {
-    const execCheckoutRes = await execCheckout(options.dir, nextInstancePath, options.ref);
+    const execCheckoutRes = await execProcCheckout(options.dir, nextInstancePath, options.ref);
     console.log(`execCheckoutRes`, execCheckoutRes);
   } catch (error) {
     console.log(`Checkout step failed:`, error);
@@ -2092,8 +2193,8 @@ async function initProcessor(options) {
     process.exit(1);
   }
 
-  const filesToCopy = (process.env.PIPELINE_STEP_COPY ?? "data,.env,node_modules,build").split(",");
-  const execCopyRes = await execCopy(options.dir, nextInstancePath, filesToCopy);
+  const filesToCopy = (process.env.PIPELINE_STEP_COPY ?? ".env,node_modules").split(",");
+  const execCopyRes = await execCopy(options.dir, currInstancePath, nextInstancePath, filesToCopy);
   console.log(`execCopyRes`, execCopyRes);
 
   const isInstallEnabled = process.env.PIPELINE_STEP_INSTALL !== "off" && process.env.PIPELINE_STEP_INSTALL !== "0";
@@ -2185,41 +2286,43 @@ async function execPurge(oldInstancePath, prevInstancePath, currInstancePath, ne
     debugProcess && console.log("Removing old instance path", { oldInstancePath });
     const result = await executeProcessPredictably(`rm -rf "${oldInstancePath}"`, path.dirname(oldInstancePath), {
       timeout: 10_000,
+      shell: true,
     });
     console.log(result);
   }
 
-  if (prevInstancePath && prev) {
-    debugProcess && console.log("Moving previous instance path to", oldInstancePath);
+  if (prevInstancePath && oldInstancePath && prev) {
+    debugProcess && console.log("Moving previous instance path", oldInstancePath);
+    await sleep(500);
     const result = await executeProcessPredictably(
       `mv -f "${prevInstancePath}" "${oldInstancePath}"`,
       path.dirname(prevInstancePath),
-      { timeout: 10_000 }
+      { timeout: 10_000, shell: true }
     );
     console.log(result);
   }
 
-  if (curr && prevInstancePath) {
+  if (curr && currInstancePath && prevInstancePath) {
     debugProcess && console.log("Copying current instance files to", prevInstancePath);
+    await sleep(500);
     const result = await executeProcessPredictably(
       `cp -rf "${currInstancePath}" "${prevInstancePath}"`,
       path.dirname(currInstancePath),
-      { timeout: 10_000 }
+      { timeout: 10_000, shell: true }
     );
     console.log(result);
   }
-  if (next) {
+  if (!next || !nextInstancePath) {
     return;
   }
-  if (nextInstancePath) {
-    debugProcess && console.log("Removing upcoming production folder", { nextInstancePath });
-  }
+  debugProcess && console.log("Removing upcoming production folder", { nextInstancePath });
+  await sleep(500);
   // Remove new production folder
   const result = await executeProcessPredictably(`rm -rf "${nextInstancePath}"`, path.dirname(nextInstancePath), {
     timeout: 10_000,
+    shell: true,
   });
   debugProcess && console.log("Removal of new production folder:", result);
-
   const newProdStat = await asyncTryCatchNull(fs.promises.stat(nextInstancePath));
   if (result.error || result.exit !== 0) {
     if (newProdStat) {
@@ -2253,7 +2356,7 @@ async function execPurge(oldInstancePath, prevInstancePath, currInstancePath, ne
   return true;
 }
 
-async function execCheckout(repositoryPath, nextInstancePath, ref) {
+async function execProcCheckout(repositoryPath, nextInstancePath, ref) {
   debugProcess && console.log("Preparing checkout to", JSON.stringify(nextInstancePath));
   {
     const stat = await asyncTryCatchNull(fs.promises.stat(nextInstancePath));
@@ -2261,6 +2364,7 @@ async function execCheckout(repositoryPath, nextInstancePath, ref) {
       // Create new production folder
       const result = await executeProcessPredictably(`mkdir "${nextInstancePath}"`, path.dirname(nextInstancePath), {
         timeout: 10_000,
+        shell: true,
       });
       if (result.error || result.exit !== 0) {
         throw new Error(
@@ -2272,52 +2376,115 @@ async function execCheckout(repositoryPath, nextInstancePath, ref) {
     }
   }
   {
+    const b = await checkPathStatus(nextInstancePath);
     debugProcess && console.log("Executing checkout from", JSON.stringify(repositoryPath));
-    const result = await executeGitCheckout(repositoryPath, nextInstancePath, ref);
-    if (result.error || result.exit !== 0) {
-      throw new Error(
-        `Failed to checkout to new production folder: ${JSON.stringify({
-          result,
-        })}`
-      );
+    debugProcess && console.log("Before checkout file count:", b.children.length);
+    let result;
+    try {
+      result = await executeGitCheckout(repositoryPath, nextInstancePath, ref);
+      if (result.error || result.exit !== 0) {
+        console.log(
+          `Failed to checkout to new production folder: ${JSON.stringify({
+            result,
+          })}`
+        );
+      }
+    } catch (err) {
+      debugProcess && console.log("Checkout execution raised an error:", JSON.stringify(err.stack.trim()));
+    }
+    const s = await checkPathStatus(nextInstancePath);
+    if (s.children.length) {
+      debugProcess && console.log("Checkout target root files:", s.children);
+    } else {
+      debugProcess && console.log("Checkout did not generate any file at", JSON.stringify(nextInstancePath));
+      debugProcess && console.log("Attempting git clone from:", JSON.stringify(repositoryPath));
+      const cmd = `git clone . ${nextInstancePath}`;
+      const result = await executeGitProcessPredictably(cmd, repositoryPath);
+      if (result.error || result.exit !== 0) {
+        throw new Error(
+          `Failed to clone during checkout to new production folder: ${JSON.stringify({
+            result,
+          })}`
+        );
+      }
+      const s = await checkPathStatus(nextInstancePath);
+      debugProcess &&
+        console.log("Clone target root file count:", s.children instanceof Array ? s.children.length : "?");
+      if (!s.children.length) {
+        throw new Error(`Could not find any file inside ${JSON.stringify(s.path)}`);
+      }
     }
     debugProcess && console.log("Checkout successfull");
     return result;
   }
 }
 
-async function execCopy(repositoryPath, nextInstancePath, files = ["data", ".env", "node_modules", "build"]) {
-  if (!(await checkPathStatus(repositoryPath)).type.dir) {
-    console.log("Skipping copy because instance folder was not found at", JSON.stringify(repositoryPath));
+async function execCopy(
+  repositoryPath,
+  currInstancePath,
+  nextInstancePath,
+  files = ["data", ".env", "node_modules", "build"]
+) {
+  const repo = await checkPathStatus(repositoryPath);
+  const curr = await checkPathStatus(currInstancePath);
+  const next = await checkPathStatus(nextInstancePath);
+  if (!repo.type.dir) {
+    throw new Error(`Repository path not found at copy step: ${JSON.stringify(repositoryPath)}`);
+  }
+  if (!curr.type.dir || !next.type.dir) {
+    console.log(
+      "Skipping copy step because a instance folder was not found:",
+      JSON.stringify({ currInstancePath, nextInstancePath })
+    );
     return;
   }
-  console.log("Executing copy");
-  for (const file of files) {
-    const source = path.resolve(repositoryPath, file);
-    const s = await asyncTryCatchNull(fs.promises.stat(source));
-    if (!(s instanceof fs.Stats)) {
-      console.log("Skipped copy of not found:", file);
+  const sourceList = await Promise.all(files.map((f) => checkPathStatus([currInstancePath, f])));
+  const targetList = await Promise.all(files.map((f) => checkPathStatus([nextInstancePath, f])));
+  if (sourceList.every((s) => !s.type.file && !s.type.dir)) {
+    console.log(
+      "Skipping copy step because there are no source files that exist at:",
+      JSON.stringify(currInstancePath)
+    );
+    return;
+  }
+  console.log("Executing copy step");
+  for (let i = 0; i < sourceList.length; i++) {
+    const s = sourceList[i];
+    const t = targetList[i];
+    if (s.type.file) {
+      console.log("Copying file from", files[i]);
+    } else if (s.type.dir) {
+      if (t.type.file) {
+        const a = await fs.promises.readFile(s.path, "utf-8");
+        const b = await fs.promises.readFile(t.path, "utf-8");
+        if (a === b) {
+          console.log("Skipping unchanged", files[i]);
+        }
+      }
+      console.log("Copying folder from", files[i]);
+    } else {
+      console.log("Skipping not found", files[i]);
       continue;
     }
-    if (s.isDirectory()) {
-      console.log("Copying folder", file, "...");
-    } else if (s.isFile()) {
-      console.log("Copying file", file, "...");
-    }
-    const target = path.resolve(nextInstancePath, file);
-    const t = await asyncTryCatchNull(fs.promises.stat(target));
-    if (s.isFile() && t) {
-      console.log("Removing existing target before coping:", file);
-      const result = await executeProcessPredictably(`rm -rf "${target}"`, path.dirname(nextInstancePath), {
+    if (t.type.file || t.type.dir) {
+      console.log("Removing existing target before coping:", JSON.stringify(t.path));
+      const result = await executeProcessPredictably(`rm -rf "${t.path}"`, t.parent, {
         timeout: 10_000,
+        shell: true,
       });
       if (result.error || result.exit !== 0) {
-        throw new Error(`Failed to remove existing copy target: ${JSON.stringify({ result })}`);
+        throw new Error(`Failed to remove existing copy target: ${JSON.stringify(result)}`);
       }
     }
-    const result = await executeProcessPredictably(`cp -r "${source}" "${target}"`, repositoryPath, {
+    const result = await executeProcessPredictably(`cp -r "${s.path}" "${t.path}"`, repositoryPath, {
       timeout: 10_000,
+      shell: true,
     });
+    if (result.error || result.exit !== 0) {
+      throw new Error(
+        `Failed to copy from ${JSON.stringify(s.path)} to ${JSON.stringify(t.path)}: ${JSON.stringify(result)}`
+      );
+    }
     console.log({ result });
   }
 }
@@ -2373,17 +2540,15 @@ async function execInstall(repositoryPath, nextInstancePath, cmd = "") {
   process.stdout.write("\n");
   if (result.error instanceof Error) {
     throw new Error(
-      `Failed with error while installing dependencies with "${cmd}": ${JSON.stringify(result.error.stack)}`
+      `Failed with error while installing dependencies with "${cmd}":\n${JSON.stringify(result.error.stack)}`
     );
   }
   if (result.error) {
-    throw new Error(`Failed with while installing dependencies with "${cmd}": ${JSON.stringify(result)}`);
+    throw new Error(`Failed with while installing dependencies with "${cmd}":\n${JSON.stringify(result)}`);
   }
   if (result.exit !== 0) {
     throw new Error(
-      `Failed with exit ${result.exit} while installing dependencies with "${cmd}": ${JSON.stringify({
-        result,
-      })}`
+      `Failed with exit ${result.exit} while installing dependencies with "${cmd}":\n${JSON.stringify(result)}`
     );
   }
   const stat = await asyncTryCatchNull(fs.promises.readFile(path.resolve(nextInstancePath, "node_modules")));
@@ -2413,6 +2578,7 @@ async function execScript(nextInstancePath, cmd = "", timeout = 60_000) {
   const result = await executeProcessPredictably(cmd, nextInstancePath, {
     timeout,
     output: (t) => process.stdout.write(t),
+    shell: true,
   });
   if (result.error || result.exit !== 0) {
     throw new Error(
@@ -2440,99 +2606,11 @@ async function execReplaceProjectServer(prevInstancePath, nextInstancePath, debu
         nextInstancePath,
       });
     }
-    console.log("Upgrade response", res);
-    return res;
-  });
-}
-// ./src/modes/scheduleMode.js
-// @ts-check
-
-
-
-
-
-
-
-
-
-
-
-
-/**
- * @type {import("../lib/getProgramArgs.js").InitModeMethod}
- */
-async function initScheduler(options) {
-  const debug = options.debug;
-  const logs = await getLastLogs();
-  const list = logs.list.filter((f) => ["proc"].includes(path.basename(f.file).substring(0, 4)));
-  console.log(`Scheduling script started for ${JSON.stringify(logs.projectPath)}`, debug ? "in debug mode" : "");
-
-  let cursor = 0;
-  const last = list[list.length - 1];
-  if (last) {
-    cursor = last.time;
-    console.log(
-      `Latest log file "${path.basename(last.file)}" was updated ${getIntervalString(
-        new Date().getTime() - last.time
-      )} ago (at ${getDateTimeString(last.time)})`
-    );
-    await sleep(200);
-    let i = Math.max(0, list.length - (debug ? 10 : 2));
-    process.stdout.write(`  Displaying ${list.length - i} logs:\n`);
-    await sleep(200);
-    process.stdout.write("\n");
-    await sleep(200);
-    for (i = i; i < list.length; i++) {
-      const obj = list[i];
-      outputLogEntry(obj.file.substring(obj.file.length - 20).padStart(20), obj);
+    console.log("Manager process upgrade response:");
+    for (const line of JSON.stringify(res, null, "  ").split("\n")) {
+      console.log(line);
     }
-    process.stdout.write("\n");
-    await sleep(200);
-    if (debug && i === list.length - 1) {
-      console.log("Last log object:", last);
-    }
-    process.stdout.write("\n");
-    await sleep(200);
-    const runs = await isProcessRunningByPid(last.pid);
-    if (runs) {
-      console.log("The process is executing at pid", last.pid);
-    }
-  } else {
-    console.log("There are no processor log files");
-  }
-
-  const cwd = logs.projectPath;
-  const program = process.argv[0];
-  const script = path.resolve(process.argv[1]);
-
-  const args = [script, "--processor"];
-  if (options.ref) {
-    args.push(options.ref);
-    console.log("Loading ref data for", options.ref);
-    const refData = await getRepoCommitData(options.dir, options.ref);
-    console.log("Hash", refData.hash, "Ref", options.ref, "\nCommit", getDateTimeString(refData.date), refData.text);
-  }
-  if (options.debug) {
-    args.push("--debug");
-  }
-
-  debug && console.log(`Spawning processor script "${path.basename(script)}" with ${args.length - 1} arguments`);
-  debug && console.log(`${options.sync ? "Syncronous" : "Detached"} processor execution args:`, args.slice(1));
-
-  const exec = executeWrappedSideEffect('Spawning "--processor" child', async () => {
-    return await spawnChildScript(program, args, cwd, options.sync);
-  });
-  const wait = executeWrappedSideEffect('Waiting for "processor" logs', async () => {
-    return await waitForLogFileUpdate(cursor, [], ["proc"]);
-  });
-  await Promise.all([exec, wait]);
-  console.log("Schedule mode finished");
-}
-
-async function spawnChildScript(program, args, cwd, detached) {
-  await sleep(500);
-  return await executeProcessPredictably([program, ...args], cwd, {
-    detached,
+    return;
   });
 }
 // ./src/modes/configMode.js
@@ -2582,31 +2660,30 @@ async function initConfig(options) {
   let initialized = false;
   if (!status.type.proj) {
     console.log("Initializing project target:", targetPath);
-    await initializeGitRepositoryProject(targetPath, options.force);
+    await initializeGitRepositoryProject(targetPath, options.force, options);
     initialized = true;
     status = await checkPathStatus(targetPath);
     if (!status.type.proj) {
       console.log("Obs: Initializing project did not update status:", status.type);
     }
   }
-  console.log("Updating path to:", targetPath);
+  console.log("Updating path to:", targetPath, initialized ? '(after setup)': '');
   process.chdir(targetPath);
   options.dir = targetPath;
-  console.log("Verifying hash...");
+  console.log("Verifying repository commit data...");
   const commitData = await getRepoCommitData(targetPath);
-  options.debug &&
-    console.log(
-      "[debug] Hash result:",
-      commitData,
-      `(${getIntervalString(new Date().getTime() - commitData.date.getTime())} ago)`
-    );
-  if (commitData.error) {
-    console.log(
-      `Last commit check failed: ${
-        commitData.error instanceof Error ? commitData.error.stack : JSON.stringify(commitData.error)
-      }`
-    );
+  if (commitData && commitData.error instanceof Error) {
+    console.log("Could not load repository data:", commitData.error.message);
     throw new Error("Failed while reading latest repository commit data");
+  } else {
+    options.debug &&
+      console.log(
+        "Last commit was",
+        `${getIntervalString(new Date().getTime() - commitData.date.getTime())} ago`,
+        `(at ${getDateTimeString(commitData.date)})`
+      );
+    delete commitData.date;
+    options.debug && console.log("Last commit data:", commitData);
   }
   options.debug && console.log("Requesting manager process status...");
   let res;
@@ -2627,10 +2704,10 @@ async function initConfig(options) {
     options.debug && console.log("Requesting manager process status...");
     offline = res.error && res.stage === "network";
   }
-  if (offline && options.mode === "setup") {
-  }
   console.log("Manager process response:");
-  console.log(res);
+  for (const line of JSON.stringify(res, null, "  ").split("\n")) {
+    console.log(line);
+  }
   intPause();
 }
 
@@ -2921,7 +2998,7 @@ async function interGetRepositoryPath(options) {
   return result;
 }
 
-async function initializeGitRepositoryProject(targetPath, forceUpdate = false) {
+async function initializeGitRepositoryProject(targetPath, forceUpdate = false, options) {
   const status = await checkPathStatus(targetPath);
   console.log(
     `Initializing ${status.type.bare ? "the" : status.type.dir ? "an existing" : "a new"} git repository named`,
@@ -2948,11 +3025,11 @@ async function initializeGitRepositoryProject(targetPath, forceUpdate = false) {
     await executeWrappedSideEffect(
       "Initialize repository",
       async () => {
-        const result = await executeProcessPredictably("git init --bare", targetPath, { timeout: 2500 });
+        const result = await executeGitProcessPredictably("git init --bare", targetPath);
         if (result.exit !== 0 || result.error) {
           console.log("Git init failed with exit code", result.exit);
-          console.log(result.output);
-          throw new Error("Git init Failed");
+          console.log(result);
+          throw new Error("Git init failed");
         }
       },
       targetPath
@@ -3035,7 +3112,7 @@ async function initializeGitRepositoryProject(targetPath, forceUpdate = false) {
       }
     }
   }
-  await initializeConfigFile(targetPath);
+  await initializeConfigFile(targetPath, options);
   console.log(
     "Initialization of git repository finished for",
     JSON.stringify(path.basename(targetPath)),
@@ -3048,17 +3125,37 @@ async function initializeGitRepositoryProject(targetPath, forceUpdate = false) {
   }
 }
 
-async function initializeConfigFile(targetPath) {
-  const envPath = path.resolve(targetPath, process.env.DEPLOYMENT_FOLDER_NAME || "deployment", ".env");
-  const cfg = await checkPathStatus(envPath);
-  const text = cfg.type.file ? await fs.promises.readFile(envPath, "utf-8") : "";
-  const pairs = text
-    .split("\n")
-    .map((f) => (f.includes("=") ? f.trim() : ""))
-    .filter((f) => f.length)
-    .map((a) => [a.substring(0, a.indexOf("=")), a.substring(a.indexOf("=") + 1)]);
-
-  const names = [
+async function initializeConfigFile(targetPath, options) {
+  const envFilePath = path.resolve(targetPath, process.env.DEPLOYMENT_FOLDER_NAME || "deployment", ".env");
+  const cfg = await checkPathStatus(envFilePath);
+  const pairs = [];
+  let original = "";
+  if (cfg.type.file) {
+    console.log("Loading config file from", JSON.stringify(envFilePath));
+    original = await fs.promises.readFile(envFilePath, "utf-8");
+    original = original.trim();
+    const list = original
+      .split("\n")
+      .map((f) => (f.includes("=") ? f.trim() : ""))
+      .filter((f) => f.length)
+      .map((a) => [a.substring(0, a.indexOf("=")), a.substring(a.indexOf("=") + 1)]);
+    if (cfg.type.file) {
+      console.log("Loaded config file vars:", JSON.stringify(list.filter((f) => f[1].trim().length).map((a) => a[0])));
+    }
+    for (const [key, value] of list) {
+      if (!value) {
+        continue;
+      }
+      let pair = pairs.find((p) => p[0] === key);
+      if (pair) {
+        pair[1] = value;
+      } else {
+        pair = [key, value];
+        pairs.push(pair);
+      }
+    }
+  }
+  const envKeyList = [
     "LOG_FOLDER_NAME",
     "DEPLOYMENT_FOLDER_NAME",
     "OLD_INSTANCE_FOLDER_PATH",
@@ -3071,57 +3168,40 @@ async function initializeConfigFile(targetPath) {
     "PIPELINE_STEP_BUILD",
     "PIPELINE_STEP_TEST",
     "PIPELINE_STEP_START",
-    ...pairs.map((p) => p[0]),
   ];
-  const uniques = [...new Set(names)];
-  const vars = uniques.map((name) => {
-    const saved = (
-      pairs
-        .filter((p) => p[0] === name)
-        .map((p) => p[1])
-        .pop() || ""
-    ).trim();
-    const value = (process.env[name] || "").trim();
-    return {
-      name,
-      value,
-      saved,
-      same: value === saved,
-    };
-  });
-  const updates = vars.filter((f) => !f.same).map((a) => a.name);
-  if (updates.length === 0) {
-    return false;
+  for (const key of envKeyList) {
+    const value = process.env[key];
+    if (!value) {
+      continue;
+    }
+    let pair = pairs.find((p) => p[0] === key);
+    if (pair) {
+      pair[1] = value;
+    } else {
+      pair = [key, value];
+      pairs.push(pair);
+    }
   }
-  if (!vars.map((v) => v.name).includes("DEPLOYMENT_SETUP_DATE_TIME")) {
-    vars.push({
-      name: "DEPLOYMENT_SETUP_DATE_TIME",
-      value: new Date().toISOString(),
-      saved: "",
-      same: false,
-    });
-  }
-  console.log(
-    cfg.type.file ? "Existing" : "Missing",
-    "env config file of",
-    targetPath,
-    "has",
-    updates.length,
-    "differences"
-  );
+  console.log(cfg.type.file ? "Existing" : "Missing", "env config file of", targetPath, "has", pairs.length, "vars");
   const lines = [];
-  for (const { name, value } of vars) {
+  for (const [name, value] of pairs) {
     lines.push(`${name}=${value}`);
   }
-  const newText = lines.join("\n") + "\n";
-  console.log("Writing", newText.length, "chars to project config file (from", text.length, "chars)");
-  await executeWrappedSideEffect(`${cfg.type.file ? "Update" : "Create"} config file`, async () => {
-    await fs.promises.writeFile(envPath, newText, "utf-8");
-    console.log(
-      `${cfg.type.file ? "Updated" : "Created"} deployment config file "${path.basename(envPath)}" inside`,
-      JSON.stringify(path.dirname(envPath))
-    );
-  });
+
+  let text = lines.join("\n") + "\n";
+  if (options.port && !text.includes('INTERNAL_DATA_SERVER_PORT=')) {
+    console.log(`Adding the "port" parameter (${options.port}) to config`);
+    text = `${text}INTERNAL_DATA_SERVER_PORT=${options.port}\n`;
+  }
+  if (original === text) {
+    console.log("Maintaining the config file with", text.length, "bytes (no updates)");
+  } else {
+    console.log(cfg.type.file ? "Updating" : "Creating", "the config file at", envFilePath);
+    await executeWrappedSideEffect(`${cfg.type.file ? "Update" : "Create"} config file`, async () => {
+      await fs.promises.writeFile(envFilePath, text, "utf-8");
+      console.log(`${cfg.type.file ? "Updated" : "Created"} deployment config file at`, JSON.stringify(envFilePath));
+    });
+  }
   return true;
 }
 
@@ -3159,15 +3239,16 @@ async function initPostUpdateScript(targetPath) {
   }
   if (!updExists || (updExists && updOriginal.trim() !== updSource.trim())) {
     console.log(updExists ? "Updating" : "Creating", "post-update hook");
+    await sleep(400);
     await executeWrappedSideEffect(
       "Create and enable post-update hook",
       async (updateFilePath) => {
         await fs.promises.writeFile(updateFilePath, updSource, "utf-8");
         console.log("Created git hook file");
-        const result = await executeProcessPredictably(`chmod +x "${updateFilePath}"`, targetPath);
+        const result = await executeProcessPredictably(`chmod +x "${updateFilePath}"`, targetPath, { shell: true });
         if (result.exit !== 0 || result.error) {
           console.log("Updating execution permission of git hook failed with exit code", result.exit);
-          console.log(result.output ? result.output : result);
+          console.log(result);
           throw new Error("Updating execution permission of git hook failed");
         }
         console.log("Enabled git hook file");
@@ -3286,6 +3367,7 @@ async function intSelect(subject = "", options = [], printOptions = false) {
  * @property {string} mode - The program mode for the options
  * @property {string} ref - The version hash for deployment
  * @property {string} dir - The target project repository path
+ * @property {string} port - The port to use for the internal server
  */
 
 function getBaseProgramArgs() {
@@ -3300,6 +3382,7 @@ function getBaseProgramArgs() {
     mode: "",
     ref: "",
     dir: "",
+    port: "",
   };
 }
 
@@ -3355,6 +3438,14 @@ function parseProgramArgs(args = process.argv.slice(2), options = {}, remaining 
       debug && console.log("[Arg]", i, "set ", ["debug", arg]);
       continue;
     }
+    if (indexes.port === undefined && ["--port", "--manager-port", "--mport", "--tcp", "-port"].includes(arg) && arg[i+1] && !/\D/g.test(arg[i+1])) {
+      indexes.port = i;
+      options.port = args[i+1];
+      debug && console.log("[Arg]", i, "prep", ["port", arg]);
+      debug && console.log("[Arg]", i, "set ", ["port", options.port]);
+      i++;
+      continue;
+    }
     if (indexes.force === undefined && ["--force", "--yes", "-y"].includes(arg)) {
       indexes.force = i;
       options.force = true;
@@ -3371,6 +3462,12 @@ function parseProgramArgs(args = process.argv.slice(2), options = {}, remaining 
       indexes.dry = i;
       options.dry = true;
       debug && console.log("[Arg]", i, "set ", ["dry", arg]);
+      continue;
+    }
+    if (["--help", "-h", "--h", "--?", "-?", "/?", "/?"].includes(arg)) {
+      indexes.mode = i;
+      options.mode = "help";
+      debug && console.log("[Arg]", i, "made", ["mode", options.mode]);
       continue;
     }
     const canBeMode = indexes.mode === undefined;
@@ -3400,7 +3497,7 @@ function parseProgramArgs(args = process.argv.slice(2), options = {}, remaining 
     }
     if (
       (!options.mode || options.mode === "logs") &&
-      ["--instance", "--runtime", "--stream", "-app", "-ins"].includes(arg)
+      ["--runtime", "--instance", "--app", "--ins", "--stream", "-app", "-ins"].includes(arg)
     ) {
       indexes.mode = i;
       options.mode = "runtime";
@@ -3420,8 +3517,11 @@ function parseProgramArgs(args = process.argv.slice(2), options = {}, remaining 
       continue;
     }
     if (!options.ref && ["schedule", "process"].includes(options.mode || "") && i - 1 === indexes.mode) {
-      const argExists = arg.includes("~") ? false : fs.existsSync(path.resolve(options.dir || process.cwd(), arg));
-      if (!argExists || arg.toLowerCase() === "head") {
+      let isRef = !arg.includes('.') && !arg.includes('!') && (arg.startsWith("refs/") || arg.startsWith("HEAD"));
+      if (!isRef && fs.existsSync(path.resolve(options.dir || process.cwd(), arg, 'config')) && fs.existsSync(path.resolve(options.dir || process.cwd(), arg, 'hooks'))) {
+        isRef = false;
+      }
+      if (isRef) {
         indexes.ref = i;
         options.ref = arg;
         debug && console.log("[Arg]", i, "set ", ["ref", options.ref]);
@@ -3432,6 +3532,8 @@ function parseProgramArgs(args = process.argv.slice(2), options = {}, remaining 
         } else if (
           arg.length >= 6 &&
           arg.length <= 50 &&
+          !arg.includes("/") &&
+          !arg.includes("\\") &&
           !arg.includes(" ") &&
           !arg.includes("_") &&
           !arg.includes(".") &&
@@ -3464,7 +3566,12 @@ function parseProgramArgs(args = process.argv.slice(2), options = {}, remaining 
       continue;
     }
     const letters = arg.replace(/\W/g, "").toLowerCase();
-    const match = modes.find((k) => k.substring(0, 4).toLowerCase() === letters.substring(0, 4));
+    const match = modes.find(
+      (k) =>
+        (letters === "l" && k === "logs") ||
+        (letters === "s" && k === "status") ||
+        k.substring(0, 4).toLowerCase() === letters.substring(0, 4)
+    );
     if (
       match &&
       (indexes.mode === undefined ||
@@ -3537,6 +3644,7 @@ function isDebug() {
   return parsed && parsed.debug;
 }
 // ./src/modes/managerMode.js
+global.lastPid = 0
 global.instancePath = ""
 global.terminating = false
 global.stopping = false
@@ -3550,15 +3658,49 @@ async function initManager(options) {
   if (options.dry) {
     console.log('Warning: The manager process ignores the "dry" parameter');
   }
-  const host = process.env.INTERNAL_DATA_SERVER_HOST || "127.0.0.1";
-  const port = process.env.INTERNAL_DATA_SERVER_PORT || "49737";
-  console.log(`Creating internal server at http://${host}:${port}/...`);
-  await sleep(300);
+  const root = options.dir || process.cwd();
+  const deployFolderPath = path.resolve(root, process.env.DEPLOYMENT_FOLDER_NAME || 'deployment');
+  if (!fs.existsSync(deployFolderPath)) {
+    throw new Error(`Cannot start manager because deployment folder was not found at ${JSON.stringify(deployFolderPath)}`)
+  }
+  if (options.port && process.env.INTERNAL_DATA_SERVER_PORT !== options.port) {
+    process.env.INTERNAL_DATA_SERVER_PORT = options.port;
+    const envFilePath = path.resolve(deployFolderPath, '.env');
+    if (!fs.existsSync(envFilePath)) {
+      throw new Error(`Cannot start manager because config file was not found at ${JSON.stringify(envFilePath)}`);
+    }
+    let text = await fs.promises.readFile(envFilePath, 'utf-8');
+    if (!text.endsWith('\n')) {
+      text = `${text}\n`;
+    }
+    if (!text.includes('INTERNAL_DATA_SERVER_PORT=')) {
+      console.log(`Applying "port" parameter (${options.port}) to config file`);
+      text = `${text}INTERNAL_DATA_SERVER_PORT=${options.port}\n`;
+      if (!options.dry) {
+        await fs.promises.writeFile(envFilePath, text, 'utf-8');
+      }
+      console.log('Updated config file at:', JSON.stringify(envFilePath.replace(/\\/g, '/')));
+    }
+  }
+  const { host, port, hostname } = getManagerHost();
+  const verifyStatus = await sendInternalRequest(hostname, "status");
+  if (!verifyStatus.error) {
+    console.log("Existing manager script from", JSON.stringify(hostname), "already exists");
+    console.log("Existing manager replied:", JSON.stringify(verifyStatus));
+    await sleep(1000);
+    console.log("Will attempt to listen to", JSON.stringify(hostname), "even though it seems to exist");
+    await sleep(1000);
+    console.log(`Attempting to create internal server at ${JSON.stringify(hostname)}...`);
+    await sleep(1000);
+  } else {
+    console.log(`Creating internal server at ${JSON.stringify(hostname)}...`);
+    await sleep(300);
+  }
   try {
     const result = await createInternalServer(host, port, handleRequest);
     server = result.server;
   } catch (err) {
-    console.log(`Failed while creating internal server at http://${host}:${port}/`);
+    console.log(`Failed while creating internal server at ${JSON.stringify(hostname)}`);
     console.log(err);
     await sleep(300);
     process.exit(1);
@@ -3593,10 +3735,25 @@ async function initManager(options) {
   const data = await getRepoCommitData(options.dir);
   if (data?.hash) {
     try {
-      console.log("Starting instance child at commit", data.hash);
-      const result = await startInstanceChild(data.hash);
-      console.log("Start instance child result:");
-      console.log(result);
+      console.log("Current child commit hash:", data.hash);
+      let paths = await getInstancePathStatuses();
+      const curr = paths.curr;
+      if (!curr || !curr.path) {
+        console.log(`Wont start current instance because it is invalid: ${JSON.stringify(curr)}`);
+      } else if (!curr.type.dir) {
+        console.log(`Wont start current instance because it does not exist at: ${JSON.stringify(curr.path)}`);
+      }
+      if (!curr || !curr.path || !curr.type.dir) {
+        console.log('Run deployer by pushing changes or by running this script with the "--processor" argument ');
+        console.log("Skipping instance initialization");
+      } else {
+        if (curr && curr.path && curr.type.dir) {
+          console.log("Starting instance child...");
+          const result = await startInstanceChild(data.hash);
+          console.log("Start instance child result:");
+          console.log(result);
+        }
+      }
     } catch (err) {
       console.log("Start instance child failed:");
       console.log(err);
@@ -3608,16 +3765,17 @@ async function initManager(options) {
 }
 
 async function startInstanceChild(hash = "") {
-  const paths = await getInstancePathStatuses();
+  let paths = await getInstancePathStatuses();
   const curr = paths.curr;
-  if (!curr.path) {
-    throw new Error(`Failed to start instance because current folder is invalid: ${JSON.stringify(curr)}`);
-  }
-  if (!curr.type.dir) {
-    throw new Error(`Failed to start instance because instance folder does not exist at ${JSON.stringify(curr.path)}`);
-  }
-  if (!curr.children.length) {
-    throw new Error(`Failed to start instance because instance folder is empty at ${JSON.stringify(curr.path)}`);
+  if (!curr || !curr.path) {
+    console.log(`Wont start current instance because it is invalid: ${JSON.stringify(curr)}`);
+    throw new Error("Invalid current instance path");
+  } else if (!curr.type.dir) {
+    console.log(`Wont start current instance because it does not exist at: ${JSON.stringify(curr.path)}`);
+    throw new Error("Invalid current instance path");
+  } else if (!curr.children.length) {
+    console.log(`Wont start current instance because it is an empty directory at: ${JSON.stringify(curr.path)}`);
+    throw new Error("Invalid empty current instance path");
   }
   let main = "";
   let pkg = {};
@@ -3679,7 +3837,7 @@ async function startInstanceChild(hash = "") {
     type = `${prefix.substring(prefix.lastIndexOf("/") + 1)} command`;
   }
   console.log("Instance command type:", JSON.stringify(type));
-  const logs = await getLogFileStatus([path.dirname(paths.deploy.path), "instance"]);
+  const logs = await getLogFileStatus(path.dirname(paths.deploy.path), "instance");
   if (!logs.parent) {
     console.log("Creating instance log folder at:", JSON.stringify(path.dirname(logs.path)));
     await fs.promises.mkdir(path.dirname(logs.path), { recursive: true });
@@ -3687,7 +3845,7 @@ async function startInstanceChild(hash = "") {
   console.log(logs.type.file ? "Existing" : "Target", "log file path:", JSON.stringify(logs.path));
   await new Promise((resolve, reject) => {
     console.log("Starting instance process:", cmd.includes('"') || cmd.includes("\\") ? cmd : cmd.split(" "));
-    console.log("Instance path:", curr.path);
+    console.log("Instance path:", JSON.stringify(curr.path));
     child = child_process.spawn(cmd, {
       cwd: curr.path,
       stdio: ["ignore", "pipe", "pipe"],
@@ -3702,18 +3860,19 @@ async function startInstanceChild(hash = "") {
     child.on("spawn", () => {
       console.log("Instance process spawned");
       instancePath = curr.path;
+      lastPid = child.pid;
       pidContents = child.pid.toString();
       writePidFile("instance", pidContents);
       setTimeout(() => {
         resolve();
-      }, 1000);
+      }, 750);
     });
     child.on("exit", async (code) => {
       console.log("Instance process exited with code:", code);
       if (pidContents) {
         try {
           const read = await readPidFile("instance");
-          if (read.pid.toString() === pidContents) {
+          if ((read.pid || 0).toString() === pidContents) {
             console.log("Removing instance pid file at " + read.path);
             await fs.promises.unlink(read.path);
           }
@@ -3723,9 +3882,22 @@ async function startInstanceChild(hash = "") {
       }
       reject(new Error(`Child exited with code ${code}`));
     });
+    let isFirstData = true;
     const persistData = (data) => {
       try {
-        logs.path && fs.appendFileSync(logs.path, data);
+        const text = data
+          .toString()
+          .split("\n")
+          .map((a) => getDateTimeString() + " - " + a)
+          .join("\n");
+        if (isFirstData) {
+          isFirstData = false;
+          const { options } = getParsedProgramArgs();
+          if (options.debug) {
+            console.log("Instance process first output:", text);
+          }
+        }
+        logs.path && fs.appendFileSync(logs.path, text, "utf-8");
       } catch (err) {
         console.log("Failed to write to log file at", JSON.stringify(logs.path), ":", err);
         logs.path = "";
@@ -3760,15 +3932,20 @@ async function handleUpgradeRequest(next) {
       console.log(result);
       await sleep(500);
     }
-    console.log("Moving current instance files to", bkpInstancePath);
+    console.log("Creating current instance backup from", paths.curr.path);
     process.stdout.write("\n");
     const result = await executeProcessPredictably(
       `mv -f "${paths.curr.path}" "${bkpInstancePath}"`,
       path.dirname(paths.curr.path),
       { timeout: 10_000, shell: true, output: "inherit" }
     );
+    console.log("Moved current instance to", bkpInstancePath);
     console.log(result);
     await sleep(500);
+  }
+  const verify = await checkPathStatus(paths.curr.path);
+  if (verify.type.dir) {
+    console.log("Current instance exists at", verify.path);
   }
   if (next.type.dir) {
     const cwd = path.dirname(paths.curr.path);
@@ -3778,6 +3955,7 @@ async function handleUpgradeRequest(next) {
     //console.log("Moving cwd:", cwd);
     process.stdout.write("\n");
     const result = await executeProcessPredictably(cmd, cwd, { timeout: 10_000, shell: true, output: "inherit" });
+    console.log("Move result");
     console.log(result);
     console.log(
       result.exit === 0 ? "Successfully" : "Failed to",
@@ -3875,39 +4053,58 @@ async function handleRequest(url, method, data) {
         return { success: false, reason: `Failed at termination: ${err.message}`, stack: err.stack };
       }
     }
-    const nextPath = data.nextInstancePath;
+    const nextPath = data ? data.nextInstancePath : null;
     if (nextPath) {
       const next = await checkPathStatus(nextPath);
-      console.log("New instance version requested for", JSON.stringify(next.name));
-      if (next.type.dir && next.children.length) {
+      console.log(
+        `New instance request with path ${JSON.stringify(next.name)} ${next.type.dir ? "exists" : "does not exist"}`
+      );
+      if (!next.parent) {
+        console.log("The new instance path parent was not found at", JSON.stringify(next.path));
+        throw new Error("Could not upgrade instance");
+      } else if (!next.type.dir) {
+        console.log("The new instance path was not found at", JSON.stringify(next.name));
+        throw new Error("Could not upgrade instance");
+      } else if (!next.children.length) {
+        console.log("The new instance path is empty at", JSON.stringify(next.path));
+        throw new Error("Could not upgrade instance");
+      } else {
+        console.log("Upgrading instance from", JSON.stringify(next.path));
         try {
           await handleUpgradeRequest(next);
         } catch (err) {
           console.log("Failed while handling new instance version request:", err);
+          throw new Error("Could not upgrade instance");
         }
-      } else {
-        console.log("The new instance path was not found at", JSON.stringify(next.name));
       }
     }
     console.log("Spawning instance process...");
-    const promise = startInstanceChild();
+    let status = "";
+    const promise = startInstanceChild(data?.nextInstancePath);
     promise
       .then((r) => {
-        console.log("Child spawn result", r);
+        status = "resolved";
+        console.log("Instance spawn result", r);
       })
       .catch((e) => {
-        console.log("Child spawn error", e);
+        status = "failed";
+        console.log("Instance spawn error", e);
       });
     await sleep(1000);
+    if (status !== "") {
+      console.log("Instance process", status, "imediately after spawn");
+    }
     const logs = await getLastLogs(["instance"]);
     const pres = await getRunningChildInstanceProcess();
-    const runs = pres.pid ? await isProcessRunningByPid(pres.pid) : false;
-    console.log("Verifying instance pid from", pres.source, ":", pres.pid, runs ? "(running)" : "(not running)");
+    const pid = pres.pid || lastPid;
+    const runs = pid ? await isProcessRunningByPid(pid) : false;
+    console.log("Verifying instance pid from", JSON.stringify(pres.source), runs ? "(running)" : "(not running)");
     return {
       success: true,
-      reason: "Started instance folder",
-      pid: pres.pid,
-      logs: logs.list,
+      reason: `${url === "/api/restart" ? "Restarted" : "Started"} instance process`,
+      running: runs,
+      pid,
+      logs: logs.list.slice(Math.max(0, logs.list.length - 30)).map((a) => `${getDateTimeString(a.time)} ${a.text}`),
     };
   }
   if (url === "/api/logs") {
@@ -3915,6 +4112,8 @@ async function handleRequest(url, method, data) {
     const list = logs.list.map((a) => ({
       ...a,
       time: undefined,
+      src: a.src ? a.src : undefined,
+      pid: a.pid ? a.pid : undefined,
       date: getDateTimeString(new Date(a.time)),
       file: path.basename(a.file),
     }));
@@ -3946,14 +4145,18 @@ async function handleRequest(url, method, data) {
     const list = logs.list.map((a) => ({
       ...a,
       time: undefined,
+      src: a.src ? a.src : undefined,
+      pid: a.pid ? a.pid : undefined,
       date: getDateTimeString(new Date(a.time)),
       file: path.basename(a.file),
     }));
     const iLogs = list.filter((f) => f.file.startsWith("instance"));
     const dLogs = list.filter((f) => !f.file.startsWith("instance"));
+    const { hostname } = getManagerHost();
     return {
       success: true,
       path: logs.projectPath,
+      hostname,
       instance: {
         pid: read.pid,
         status: read.running ? "running" : "not-running",
@@ -3965,6 +4168,7 @@ async function handleRequest(url, method, data) {
         status: pread.running ? "in-progress" : "idle",
         path: logs.projectPath,
         logs: dLogs.slice(Math.max(0, dLogs.length - 3)),
+        uptime: getIntervalString(process.uptime() * 1000),
       },
     };
   }
@@ -3978,7 +4182,6 @@ async function getRunningChildInstanceProcess() {
     if (isChildRunning) {
       return { pid: child.pid, source: "child-instance" };
     }
-
     const read = await readPidFile("instance");
     const isPidFileRunning =
       read && read.pid && typeof read.pid === "number" && (await isProcessRunningByPid(read.pid));
@@ -4087,16 +4290,21 @@ if (parsed.ref && !["schedule", "process"].includes(parsed.mode)) {
   );
 }
 
-global.persistLogs = !["help", "logs"].includes(parsed.options.mode)
+global.persistLogs = !["help", "logs", "runtime"].includes(parsed.options.mode)
 attachToConsole(
   "log",
   persistLogs
-    ? path.resolve(process.cwd(), process.env.LOG_FOLDER_NAME || "deployment", `${parsed.options.mode}.log`)
-    : ""
+    ? path.resolve(
+        process.cwd(),
+        process.env.LOG_FOLDER_NAME || process.env.DEPLOYMENT_FOLDER_NAME || "deployment",
+        `${["runtime"].includes(parsed.options.mode) ? "logs" : parsed.options.mode}.log`
+      )
+    : "",
+  ["help", "logs", "runtime"].includes(parsed.options.mode)
 );
 
 global.valid = true
-if (["status", "logs", "schedule", "process", "manager"].includes(parsed.options.mode)) {
+if (["status", "logs", "runtime", "schedule", "process", "manager"].includes(parsed.options.mode)) {
   valid = false;
   let info = checkPathStatusSync(parsed.options.dir || process.cwd());
   // Enter .git if it exists and deployment folder doesnt
@@ -4150,16 +4358,40 @@ if (["status", "logs", "schedule", "process", "manager"].includes(parsed.options
     cfg = checkPathStatusSync(path.resolve(deploy.path, ".env"));
     valid = info.type.dir && deploy.type.dir && cfg.type.file;
   }
-  if (!cfg.type.file) {
+  if (valid && !cfg.type.file) {
     console.log(`Cannot initialize mode because the config file was not found: ${JSON.stringify(".env")}`);
     valid = false;
   }
-  if (parsed.options.dir !== info.path) {
-    parsed.options.debug && console.log("Current project path is", parsed.options.dir);
+  if (!parsed.options.dir || parsed.options.dir !== info.path) {
+    // parsed.options.debug && console.log("Current project path is", parsed.options.dir);
     parsed.options.dir = info.path;
     parsed.options.debug && console.log("Updated project path is", info.path);
   }
-  process.chdir(path.resolve(info.path));
+
+  const local = loadEnvSync([cfg.parent, cfg.path, cfg.parent ? path.resolve(cfg.parent, deployName) : '', cfg.path ? path.resolve(cfg.path, deployName) : ''], {});
+  const updated = [];
+  for (const key in local) {
+    if (process.env[key] === local[key]) {
+      continue;
+    }
+    if (!local[key] && local[key] !== "0") {
+      continue;
+    }
+    if ((key === "DEPLOYMENT_FOLDER_NAME" || key === "LOG_FOLDER_NAME") && local[key] === "deployment") {
+      process.env[key] = local[key];
+      continue;
+    }
+    updated.push(`Env "${key}" set to ${JSON.stringify(local[key])}`);
+    console.log("Updating", key, "from", process.env[key] === undefined ? '(nothing)' : process.env[key], "to", local[key]);
+    process.env[key] = local[key];
+  }
+  const targetCwd = path.resolve(info.path);
+  if (updated.length) {
+    parsed.options.debug && console.log("Updated environment vars:", updated);
+  } else {
+    parsed.options.debug && console.log("Nothing to update in environment vars");
+  }
+  process.chdir(targetCwd);
 }
 
 if (!valid) {
