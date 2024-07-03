@@ -1,4 +1,4 @@
-// Script built at 2024-07-03T13:59:55.095Z
+// Script built at 2024-07-03T14:42:40.723Z
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
@@ -1728,21 +1728,24 @@ async function initLogs(options) {
     if (prefixes.length) {
       console.log("Filters  :", JSON.stringify(prefixes));
     }
-    console.log("Current  :", getDateTimeString(new Date().getTime()));
+    console.log("Current  :", getDateTimeString(new Date().getTime(), true));
     if (list.length) {
+      const runs = await isProcessRunningByPid(list[list.length - 1].pid);
       console.log(
         "Last file:",
         JSON.stringify(list[list.length - 1].file),
-        "written by pid",
-        list[list.length - 1].pid
+        "(written by pid",
+        list[list.length - 1].pid,
+        "which",
+        runs ? "is still running)" : "is no longer running)"
       );
-      console.log("");
     }
     console.log(
       "Last log :",
       getDateTimeString(cursor),
       `(updated ${getIntervalString(new Date().getTime() - cursor)} ago)`
     );
+    console.log("");
 
     await sleep(1000);
   }
@@ -2001,7 +2004,7 @@ async function initScheduler(options) {
     await sleep(200);
     const runs = await isProcessRunningByPid(last.pid);
     if (runs) {
-      console.log("The process is executing at pid", last.pid);
+      console.log("The process from last log is executing at pid", last.pid);
     }
   } else {
     console.log("There are no processor log files");
@@ -2078,7 +2081,7 @@ async function spawnManagerProcess(debug = false, detached = true) {
     await sleep(200);
     const runs = await isProcessRunningByPid(last.pid);
     if (runs) {
-      console.log("The process is executing at pid", last.pid);
+      console.log("The process from last log is executing at pid", last.pid);
     }
   } else {
     console.log("There are no previous manager log files");
@@ -3245,12 +3248,33 @@ async function initializeConfigFile(targetPath, options) {
       console.log(`${cfg.type.file ? "Updated" : "Created"} deployment config file at`, JSON.stringify(envFilePath));
     });
   }
+  const local = loadEnvSync([path.dirname(envFilePath)], {});
+  const updated = [];
+  for (const key in local) {
+    if (process.env[key] === local[key]) {
+      continue;
+    }
+    if (!local[key] || local[key] === "0" || local[key] === "null") {
+      process.env[key] = '';
+      continue;
+    }
+    if ((key === "DEPLOYMENT_FOLDER_NAME" || key === "LOG_FOLDER_NAME") && local[key] === "deployment") {
+      process.env[key] = local[key];
+      continue;
+    }
+    updated.push(`"${key}" = ${JSON.stringify(local[key])}`);
+    process.env[key] = local[key];
+  }
+  if (updated.length) {
+    options.debug && console.log("Updated environment vars after config file save:", updated);
+  } else {
+    options.debug && console.log("No updates needed after config file save");
+  }
   return true;
 }
 
 async function initPostUpdateScript(targetPath) {
   console.log("Verifying post-update script");
-
   let s = await checkPathStatus(targetPath);
   if (s.type.dir && !s.children.includes("hooks") && !s.children.includes("refs") && s.children.includes(".git")) {
     const a = await checkPathStatus([targetPath, ".git"]);
@@ -3702,27 +3726,29 @@ async function initManager(options) {
     console.log('Warning: The manager process ignores the "dry" parameter');
   }
   const root = options.dir || process.cwd();
-  const deployFolderPath = path.resolve(root, process.env.DEPLOYMENT_FOLDER_NAME || 'deployment');
+  const deployFolderPath = path.resolve(root, process.env.DEPLOYMENT_FOLDER_NAME || "deployment");
   if (!fs.existsSync(deployFolderPath)) {
-    throw new Error(`Cannot start manager because deployment folder was not found at ${JSON.stringify(deployFolderPath)}`)
+    throw new Error(
+      `Cannot start manager because deployment folder was not found at ${JSON.stringify(deployFolderPath)}`
+    );
   }
   if (options.port && process.env.INTERNAL_DATA_SERVER_PORT !== options.port) {
     process.env.INTERNAL_DATA_SERVER_PORT = options.port;
-    const envFilePath = path.resolve(deployFolderPath, '.env');
+    const envFilePath = path.resolve(deployFolderPath, ".env");
     if (!fs.existsSync(envFilePath)) {
       throw new Error(`Cannot start manager because config file was not found at ${JSON.stringify(envFilePath)}`);
     }
-    let text = await fs.promises.readFile(envFilePath, 'utf-8');
-    if (!text.endsWith('\n')) {
+    let text = await fs.promises.readFile(envFilePath, "utf-8");
+    if (!text.endsWith("\n")) {
       text = `${text}\n`;
     }
-    if (!text.includes('INTERNAL_DATA_SERVER_PORT=')) {
+    if (!text.includes("INTERNAL_DATA_SERVER_PORT=")) {
       console.log(`Applying "port" parameter (${options.port}) to config file`);
       text = `${text}INTERNAL_DATA_SERVER_PORT=${options.port}\n`;
       if (!options.dry) {
-        await fs.promises.writeFile(envFilePath, text, 'utf-8');
+        await fs.promises.writeFile(envFilePath, text, "utf-8");
       }
-      console.log('Updated config file at:', JSON.stringify(envFilePath.replace(/\\/g, '/')));
+      console.log("Updated config file at:", JSON.stringify(envFilePath.replace(/\\/g, "/")));
     }
   }
   const { host, port, hostname } = getManagerHost();
@@ -3787,13 +3813,16 @@ async function initManager(options) {
         console.log(`Wont start current instance because it does not exist at: ${JSON.stringify(curr.path)}`);
       }
       if (!curr || !curr.path || !curr.type.dir) {
-        console.log('Run deployer by pushing changes or by running this script with the "--processor" argument ');
-        console.log("Skipping instance initialization");
+        console.log("You must run the processor for the project before it can start");
+        console.log(
+          'To start the project instance process for the first time run this script with the "--processor" argument'
+        );
+        console.log("(Skipping instance initialization because there are no project versions available)");
       } else {
         if (curr && curr.path && curr.type.dir) {
-          console.log("Starting instance child...");
+          console.log("Starting project instance child...");
           const result = await startInstanceChild(data.hash);
-          console.log("Start instance child result:");
+          console.log("Start project instance child result:");
           console.log(result);
         }
       }
@@ -4123,10 +4152,14 @@ async function handleRequest(url, method, data) {
     }
     console.log("Spawning instance process...");
     let status = "";
-    const promise = startInstanceChild(data?.nextInstancePath);
+    const promise = startInstanceChild();
     promise
       .then((r) => {
         status = "resolved";
+        if (r && r.logs) {
+          console.log("Project instance log file:", r.logs);
+          delete r.logs;
+        }
         console.log("Instance spawn result", r);
       })
       .catch((e) => {
@@ -4135,16 +4168,19 @@ async function handleRequest(url, method, data) {
       });
     await sleep(1000);
     if (status !== "") {
-      console.log("Instance process", status, "imediately after spawn");
+      console.log("Note: Instance process", status, "imediately after spawn");
     }
     const logs = await getLastLogs(["instance"]);
     const pres = await getRunningChildInstanceProcess();
     const pid = pres.pid || lastPid;
     const runs = pid ? await isProcessRunningByPid(pid) : false;
     console.log("Verifying instance pid from", JSON.stringify(pres.source), runs ? "(running)" : "(not running)");
+    const paths = await getInstancePathStatuses();
     return {
       success: true,
       reason: `${url === "/api/restart" ? "Restarted" : "Started"} instance process`,
+      current: paths.curr.path,
+      previous: paths.prev.path,
       running: runs,
       pid,
       logs: logs.list.slice(Math.max(0, logs.list.length - 30)).map((a) => `${getDateTimeString(a.time)} ${a.text}`),
@@ -4424,15 +4460,13 @@ if (["status", "logs", "runtime", "schedule", "process", "manager"].includes(par
       process.env[key] = local[key];
       continue;
     }
-    updated.push(`Env "${key}" set to ${JSON.stringify(local[key])}`);
-    console.log("Updating", key, "from", process.env[key] === undefined ? '(nothing)' : process.env[key], "to", local[key]);
+    updated.push(`"${key}" = ${JSON.stringify(local[key])}`);
+    // console.log("Updating", key, "from", process.env[key] === undefined ? '(nothing)' : process.env[key], "to", local[key]);
     process.env[key] = local[key];
   }
   const targetCwd = path.resolve(info.path);
   if (updated.length) {
     parsed.options.debug && console.log("Updated environment vars:", updated);
-  } else {
-    parsed.options.debug && console.log("Nothing to update in environment vars");
   }
   process.chdir(targetCwd);
 }
