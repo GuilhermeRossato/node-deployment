@@ -238,13 +238,18 @@ export async function execProcCheckout(repositoryPath, nextInstancePath, ref) {
     const b = await checkPathStatus(nextInstancePath);
     debugProcess && console.log("Executing checkout from", JSON.stringify(repositoryPath));
     debugProcess && console.log("Before checkout file count:", b.children.length);
-    const result = await executeGitCheckout(repositoryPath, nextInstancePath, ref);
-    if (result.error || result.exit !== 0) {
-      console.log(
-        `Failed to checkout to new production folder: ${JSON.stringify({
-          result,
-        })}`
-      );
+    let result;
+    try {
+      result = await executeGitCheckout(repositoryPath, nextInstancePath, ref);
+      if (result.error || result.exit !== 0) {
+        console.log(
+          `Failed to checkout to new production folder: ${JSON.stringify({
+            result,
+          })}`
+        );
+      }
+    } catch (err) {
+      debugProcess && console.log("Checkout execution raised an error:", JSON.stringify(err.stack.trim()));
     }
     const s = await checkPathStatus(nextInstancePath);
     if (s.children.length) {
@@ -262,7 +267,8 @@ export async function execProcCheckout(repositoryPath, nextInstancePath, ref) {
         );
       }
       const s = await checkPathStatus(nextInstancePath);
-      debugProcess && console.log("Clone target root files:", s.children);
+      debugProcess &&
+        console.log("Clone target root file count:", s.children instanceof Array ? s.children.length : "?");
       if (!s.children.length) {
         throw new Error(`Could not find any file inside ${JSON.stringify(s.path)}`);
       }
@@ -305,7 +311,7 @@ async function execCopy(
     const s = sourceList[i];
     const t = targetList[i];
     if (s.type.file) {
-      console.log("Copying folder from", files[i]);
+      console.log("Copying file from", files[i]);
     } else if (s.type.dir) {
       if (t.type.file) {
         const a = await fs.promises.readFile(s.path, "utf-8");
@@ -314,7 +320,7 @@ async function execCopy(
           console.log("Skipping unchanged", files[i]);
         }
       }
-      console.log("Copying file from", files[i]);
+      console.log("Copying folder from", files[i]);
     } else {
       console.log("Skipping not found", files[i]);
       continue;
