@@ -3,6 +3,7 @@ import { outputDatedLine, outputLogEntry } from "../logs/outputDatedLine.js";
 import { getLastLogs } from "../logs/getLastLogs.js";
 import getDateTimeString from "../utils/getDateTimeString.js";
 import { getIntervalString } from "../utils/getIntervalString.js";
+import { isProcessRunningByPid } from "../process/isProcessRunningByPid.js";
 /**
  * @type {import("../lib/getProgramArgs.js").InitModeMethod}
  */
@@ -38,21 +39,24 @@ export async function initLogs(options) {
     if (prefixes.length) {
       console.log("Filters  :", JSON.stringify(prefixes));
     }
-    console.log("Current  :", getDateTimeString(new Date().getTime()));
+    console.log("Current  :", getDateTimeString(new Date().getTime(), true));
     if (list.length) {
+      const runs = await isProcessRunningByPid(list[list.length - 1].pid);
       console.log(
         "Last file:",
         JSON.stringify(list[list.length - 1].file),
-        "written by pid",
-        list[list.length - 1].pid
+        "(written by pid",
+        list[list.length - 1].pid,
+        "which",
+        runs ? "is still running)" : "is no longer running)"
       );
-      console.log("");
     }
     console.log(
       "Last log :",
       getDateTimeString(cursor),
       `(updated ${getIntervalString(new Date().getTime() - cursor)} ago)`
     );
+    console.log("");
 
     await sleep(1000);
   }

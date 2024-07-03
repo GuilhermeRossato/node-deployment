@@ -12,6 +12,7 @@ import { getRepoCommitData } from "../lib/getRepoCommitData.js";
 import { getIntervalString } from "../utils/getIntervalString.js";
 import sleep from "../utils/sleep.js";
 import { executeGitProcessPredictably } from "../process/executeGitProcessPredictably.js";
+import { loadEnvSync } from "../utils/loadEnvSync.js";
 
 let canSkipConfirm = false;
 
@@ -644,12 +645,33 @@ async function initializeConfigFile(targetPath, options) {
       console.log(`${cfg.type.file ? "Updated" : "Created"} deployment config file at`, JSON.stringify(envFilePath));
     });
   }
+  const local = loadEnvSync([path.dirname(envFilePath)], {});
+  const updated = [];
+  for (const key in local) {
+    if (process.env[key] === local[key]) {
+      continue;
+    }
+    if (!local[key] || local[key] === "0" || local[key] === "null") {
+      process.env[key] = '';
+      continue;
+    }
+    if ((key === "DEPLOYMENT_FOLDER_NAME" || key === "LOG_FOLDER_NAME") && local[key] === "deployment") {
+      process.env[key] = local[key];
+      continue;
+    }
+    updated.push(`"${key}" = ${JSON.stringify(local[key])}`);
+    process.env[key] = local[key];
+  }
+  if (updated.length) {
+    options.debug && console.log("Updated environment vars after config file save:", updated);
+  } else {
+    options.debug && console.log("No updates needed after config file save");
+  }
   return true;
 }
 
 async function initPostUpdateScript(targetPath) {
   console.log("Verifying post-update script");
-
   let s = await checkPathStatus(targetPath);
   if (s.type.dir && !s.children.includes("hooks") && !s.children.includes("refs") && s.children.includes(".git")) {
     const a = await checkPathStatus([targetPath, ".git"]);

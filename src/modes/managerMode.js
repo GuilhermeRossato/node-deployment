@@ -34,27 +34,29 @@ export async function initManager(options) {
     console.log('Warning: The manager process ignores the "dry" parameter');
   }
   const root = options.dir || process.cwd();
-  const deployFolderPath = path.resolve(root, process.env.DEPLOYMENT_FOLDER_NAME || 'deployment');
+  const deployFolderPath = path.resolve(root, process.env.DEPLOYMENT_FOLDER_NAME || "deployment");
   if (!fs.existsSync(deployFolderPath)) {
-    throw new Error(`Cannot start manager because deployment folder was not found at ${JSON.stringify(deployFolderPath)}`)
+    throw new Error(
+      `Cannot start manager because deployment folder was not found at ${JSON.stringify(deployFolderPath)}`
+    );
   }
   if (options.port && process.env.INTERNAL_DATA_SERVER_PORT !== options.port) {
     process.env.INTERNAL_DATA_SERVER_PORT = options.port;
-    const envFilePath = path.resolve(deployFolderPath, '.env');
+    const envFilePath = path.resolve(deployFolderPath, ".env");
     if (!fs.existsSync(envFilePath)) {
       throw new Error(`Cannot start manager because config file was not found at ${JSON.stringify(envFilePath)}`);
     }
-    let text = await fs.promises.readFile(envFilePath, 'utf-8');
-    if (!text.endsWith('\n')) {
+    let text = await fs.promises.readFile(envFilePath, "utf-8");
+    if (!text.endsWith("\n")) {
       text = `${text}\n`;
     }
-    if (!text.includes('INTERNAL_DATA_SERVER_PORT=')) {
+    if (!text.includes("INTERNAL_DATA_SERVER_PORT=")) {
       console.log(`Applying "port" parameter (${options.port}) to config file`);
       text = `${text}INTERNAL_DATA_SERVER_PORT=${options.port}\n`;
       if (!options.dry) {
-        await fs.promises.writeFile(envFilePath, text, 'utf-8');
+        await fs.promises.writeFile(envFilePath, text, "utf-8");
       }
-      console.log('Updated config file at:', JSON.stringify(envFilePath.replace(/\\/g, '/')));
+      console.log("Updated config file at:", JSON.stringify(envFilePath.replace(/\\/g, "/")));
     }
   }
   const { host, port, hostname } = getManagerHost();
@@ -119,13 +121,16 @@ export async function initManager(options) {
         console.log(`Wont start current instance because it does not exist at: ${JSON.stringify(curr.path)}`);
       }
       if (!curr || !curr.path || !curr.type.dir) {
-        console.log('Run deployer by pushing changes or by running this script with the "--processor" argument ');
-        console.log("Skipping instance initialization");
+        console.log("You must run the processor for the project before it can start");
+        console.log(
+          'To start the project instance process for the first time run this script with the "--processor" argument'
+        );
+        console.log("(Skipping instance initialization because there are no project versions available)");
       } else {
         if (curr && curr.path && curr.type.dir) {
-          console.log("Starting instance child...");
+          console.log("Starting project instance child...");
           const result = await startInstanceChild(data.hash);
-          console.log("Start instance child result:");
+          console.log("Start project instance child result:");
           console.log(result);
         }
       }
@@ -455,10 +460,14 @@ async function handleRequest(url, method, data) {
     }
     console.log("Spawning instance process...");
     let status = "";
-    const promise = startInstanceChild(data?.nextInstancePath);
+    const promise = startInstanceChild();
     promise
       .then((r) => {
         status = "resolved";
+        if (r && r.logs) {
+          console.log("Project instance log file:", r.logs);
+          delete r.logs;
+        }
         console.log("Instance spawn result", r);
       })
       .catch((e) => {
@@ -467,16 +476,19 @@ async function handleRequest(url, method, data) {
       });
     await sleep(1000);
     if (status !== "") {
-      console.log("Instance process", status, "imediately after spawn");
+      console.log("Note: Instance process", status, "imediately after spawn");
     }
     const logs = await getLastLogs(["instance"]);
     const pres = await getRunningChildInstanceProcess();
     const pid = pres.pid || lastPid;
     const runs = pid ? await isProcessRunningByPid(pid) : false;
     console.log("Verifying instance pid from", JSON.stringify(pres.source), runs ? "(running)" : "(not running)");
+    const paths = await getInstancePathStatuses();
     return {
       success: true,
       reason: `${url === "/api/restart" ? "Restarted" : "Started"} instance process`,
+      current: paths.curr.path,
+      previous: paths.prev.path,
       running: runs,
       pid,
       logs: logs.list.slice(Math.max(0, logs.list.length - 30)).map((a) => `${getDateTimeString(a.time)} ${a.text}`),

@@ -116,8 +116,6 @@ if (["status", "logs", "runtime", "schedule", "process", "manager"].includes(par
   const targetCwd = path.resolve(info.path);
   if (updated.length) {
     parsed.options.debug && console.log("Updated environment vars:", updated);
-  } else {
-    parsed.options.debug && console.log("Nothing to update in environment vars");
   }
   process.chdir(targetCwd);
 }

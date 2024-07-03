@@ -50,7 +50,7 @@ export async function initScheduler(options) {
     await sleep(200);
     const runs = await isProcessRunningByPid(last.pid);
     if (runs) {
-      console.log("The process is executing at pid", last.pid);
+      console.log("The process from last log is executing at pid", last.pid);
     }
   } else {
     console.log("There are no processor log files");
