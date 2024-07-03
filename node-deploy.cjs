@@ -1,4 +1,4 @@
-// Script built at 2024-07-03T13:36:06.283Z
+// Script built at 2024-07-03T13:59:55.095Z
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
@@ -2667,7 +2667,7 @@ async function initConfig(options) {
       console.log("Obs: Initializing project did not update status:", status.type);
     }
   }
-  console.log("Updating path to:", targetPath, initialized ? '(after setup)': '');
+  console.log("Updating path to:", targetPath, initialized ? "(after setup)" : "");
   process.chdir(targetPath);
   options.dir = targetPath;
   console.log("Verifying repository commit data...");
@@ -3189,9 +3189,52 @@ async function initializeConfigFile(targetPath, options) {
   }
 
   let text = lines.join("\n") + "\n";
-  if (options.port && !text.includes('INTERNAL_DATA_SERVER_PORT=')) {
-    console.log(`Adding the "port" parameter (${options.port}) to config`);
-    text = `${text}INTERNAL_DATA_SERVER_PORT=${options.port}\n`;
+  if (!text.includes("INTERNAL_DATA_SERVER_PORT=")) {
+    let p = 0;
+    if (options.port) {
+      console.log(`Appending the "port" argument parameter to the deployment config file`);
+      p = options.port;
+    } else {
+      console.log(`Finding a "port" parameter to the internal server for the new config file`);
+      const portList = [];
+      for (let i = 49737; i < 49757; i++) {
+        portList.push(i);
+      }
+      const list = await Promise.all(
+        portList.map(
+          (port) =>
+            new Promise(async (resolve) => {
+              const timer = setTimeout(() => resolve([0, null]), 500);
+              try {
+                const response = await sendInternalRequest(`http://127.0.0.1:${port}/`, "status");
+                clearTimeout(timer);
+                resolve([port, response]);
+              } catch (err) {
+                clearTimeout(timer);
+                resolve([port, err]);
+              }
+            })
+        )
+      );
+      const candidates = list.filter(
+        ([port, res]) => port && !(res instanceof Error) && res && res.error && res.stage === "network"
+      );
+      let m = candidates.length > 0 ? candidates[Math.floor(candidates.length * Math.random())] : null;
+      if (!m) {
+        m = candidates[0];
+      }
+      if (!m) {
+        options.debug && console.log("No port candidate from list of size", candidates.length);
+        throw new Error(
+          'Could not find a valid a port for the internal data server (specify it manually using the "--port" argument)'
+        );
+      }
+      p = m[0];
+    }
+    options.debug && console.log("The internal manager port will be set to", p);
+    if (p) {
+      text = `${text}INTERNAL_DATA_SERVER_PORT=${p}\n`;
+    }
   }
   if (original === text) {
     console.log("Maintaining the config file with", text.length, "bytes (no updates)");
