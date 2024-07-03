@@ -6,16 +6,16 @@
 </h3>
 
 <h4 align="justify">
-This project configures a project to automatically process deployment when it receive updates, performing steps such as instalation of dependencies, building, execution of scripts (testing), etc. Successfull deployments replace the instance process with the new version.
+This project configures a project to automatically process a deployment pipeline when a project is updated. It performs steps such as dependency install, project building, script execution (test / lint), etc and when the process succeeds the project instance process is restarted with the new project version.
 </h4>
 
-An interactive setup process guides the user to configure the repository of a project to perform deployment, it also starts and manages the long-running instance process, restarting it when new versions are available. It supports reconfiguration, log streaming, and displaying status.
+When executed it provides a interactive setup process to configure a project repository, it also attempt to start and manage the project instance process (`npm run start`) so that it can restart it when new versions are available. This project also supports reconfiguration, streaming of logs (from deployment or from the project instance process), status retrieval, and is flexible and easy to adapt to different use cases.
 
 ## Usage
 
-The `node-deploy.cjs` script can be executed direcly with Node.js to begin configuring your project. It can be found here: [node-deploy.cjs](./node-deploy.cjs), it is a standalone Node.js script generated from the bundling process of this project (with `npm run build`).
+The `node-deploy.cjs` script can be executed direcly with [Node](https://nodejs.org/en) to setup the remote repository of your project, the latest version is [node-deploy.cjs](./node-deploy.cjs) but a stable release version can be downloaded from the [releases](https://github.com/GuilhermeRossato/node-deployment/releases) tab at this repository.
 
-You can download it from the [releases](https://github.com/GuilhermeRossato/node-deployment/releases) page or use this command to fetch and execute it direcly:
+You can download it from the or use this command to fetch and execute it direcly:
 
 ```bash
 node -e "fetch('https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deploy.cjs').then(r=>r.text()).then(t=>new Function(t)()).catch(console.log))"
@@ -29,9 +29,11 @@ wget https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/n
 node -e "fetch('https://raw.githubusercontent.com/GuilhermeRossato/node-deployment/master/node-deploy.cjs').then(r=>r.text()).then(t=>fs.promises.writeFile('node-deploy.cjs', t, 'utf-8')).catch(console.log))"
 ```
 
+Note: The standalone Node.js script does not need any dependency and it is generated from the bundling process of this project (with `npm run build`) by concatenating the source files in this project.
+
 ## Deployment
 
-The asynchronous deployment process starts when updates are submited to the project. An isolated process is spawned to perform these steps:
+The asynchronous deployment process starts when updates are submited to the project that has been configured with this. The process is isolated and spawns to perform the following steps (by default):
 
 - Checkout the new repository version to `./deployment/upcoming-instance`
 - Copies files from the current instance (configurations, dependencies, data, etc)
@@ -46,7 +48,7 @@ The [post-update](https://git-scm.com/docs/githooks) hook (configured by this sc
 
 ## Setup
 
-The setup mode is the default program mode and it prompts the user to configure a repository, it can also create the git bare repository to store the project's git data (commits, branches, etc). To initialize a repository it creates a `deployment` folder inside the repo to store logs, status, process ids, scripts, and backups.
+The setup mode is the default program mode and it prompts the user to configure a repository, it can also create the git bare repository to store the project's git data (commits, branches, etc). To initialize a repository it creates a `deployment` folder inside the repo to store **logs**, status, process ids, scripts, and backups.
 
 The [post-update](https://git-scm.com/docs/githooks) hook is configured to begin the deployment process when commits are pushed to the repository. Pipelines start creating a new release folder at (`./deployment/upcoming-instance`) and processing it until its content are ready to replace the project instance folder (`./deployment/current-instance/`). The contents of the instance previously in executing are moved to `./deployment/previous-instance` and can be used to restore the version by moving it back to its original location.
 

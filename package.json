@@ -1,8 +1,8 @@
 {
   "name": "node-project-deployment-manager",
   "type": "module",
-  "version": "1.1.0",
-  "description": "Automatic and continuous deployment manager that execute deployment pipeline steps and manage the long-running project process, restarting it when new versios are available",
+  "version": "1.2.0",
+  "description": "Automatic and continuous deployment manager to run deployment pipeline steps when projects update, running the project process and upgrading when new versions are available",
   "main": "./index.js",
   "scripts": {
     "start": "node ./index.js --help",
